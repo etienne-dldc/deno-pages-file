@@ -3,11 +3,16 @@ import { PagedFile } from "./src/mod.ts";
 
 const path = resolve(Deno.cwd(), "file.db");
 
-const file = new PagedFile(path, 256);
+const file = new PagedFile(path, { pageSize: 256 });
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
-file.debug();
+const res = file.readRootPage();
+
+console.log(decoder.decode(res.buffer));
+
+// file.debug();
 
 file.writeRootPage(
   encoder.encode(
@@ -24,33 +29,33 @@ file.writeRootPage(
 
 file.save();
 
-file.debug();
+// file.debug();
 
-file.writeRootPage(
-  encoder.encode(
-    [
-      "Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root",
-    ].join("")
-  )
-);
+// file.writeRootPage(
+//   encoder.encode(
+//     [
+//       "Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root",
+//     ].join("")
+//   )
+// );
 
-file.debug();
+// file.debug();
 
-const dataAddr = file.createPage();
+// const dataAddr = file.createPage();
 
-file.writePage(
-  dataAddr,
-  encoder.encode(
-    [
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ].join("")
-  )
-);
+// file.writePage(
+//   dataAddr,
+//   encoder.encode(
+//     [
+//       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+//       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+//       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+//       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+//       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+//     ].join("")
+//   )
+// );
 
-file.save();
+// file.save();
 
-file.debug();
+// file.debug();

@@ -1,3 +1,4 @@
+import { LeastRecentlyUsedMap } from "./LeastRecentlyUsedMap.ts";
 import {
   DataPage,
   EntryPage,
@@ -12,28 +13,40 @@ const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
 );
 
+export type Options = {
+  pageSize?: number;
+  cacheSize?: number;
+};
+
 export class PagedFile {
   public readonly path: string;
   public readonly pageSize: number;
+  public readonly cacheSize: number;
   private readonly file: Deno.File;
-  private readonly cache: Map<number, Page> = new Map();
+  private readonly cache = new LeastRecentlyUsedMap<number, Page>();
 
   // Number of pages in the document (written on file)
   private filePageCount: number;
   // Number of pages in the document (in cache)
   private memoryPageCount: number;
 
-  constructor(path: string, pageSize: number = 4096) {
+  constructor(
+    path: string,
+    {
+      pageSize = 4096,
+      cacheSize = Math.round((8 * 1024 * 1024) / pageSize),
+    }: Options = {}
+  ) {
     if (VALID_PAGE_SIZE.includes(pageSize) === false) {
       throw new Error(`Invalid pageSize.`);
     }
     this.pageSize = pageSize;
+    this.cacheSize = cacheSize;
     this.path = path;
     this.file = Deno.openSync(this.path, {
       read: true,
       write: true,
       create: true,
-      truncate: true,
     });
     const stat = this.file.statSync();
     const pageCount = stat.size / this.pageSize;
@@ -45,9 +58,9 @@ export class PagedFile {
     this.memoryPageCount = pageCount === 0 ? 1 : pageCount;
   }
 
-  public readRootPage(): PageBuffer {
+  public readRootPage(): Uint8Array {
     const page = this.getRootPage();
-    return page.getContent();
+    return this.readPageContent(page).read.copyReadonly();
   }
 
   public writeRootPage(content: Uint8Array): void {
@@ -58,9 +71,9 @@ export class PagedFile {
   public readPage(
     addr: number,
     expectedType: number = PageType.Entry
-  ): PageBuffer {
+  ): Uint8Array {
     const page = this.getEntryPage(addr, expectedType, true);
-    return page.getContent();
+    return this.readPageContent(page).read.copyReadonly();
   }
 
   public writePage(
@@ -80,14 +93,31 @@ export class PagedFile {
   public save() {
     // TODO: Optimize space
     // TODO: Optimize cache
-    this.cache.forEach((page) => {
+    for (const page of this.cache.valuesFromOldest()) {
       if (page.addr >= this.filePageCount) {
         this.filePageCount = page.addr + 1;
       }
       page.writeTo(this.file);
-    });
+    }
     if (this.memoryPageCount !== this.filePageCount) {
       throw new Error("What ?");
+    }
+    this.checkCache();
+  }
+
+  private checkCache() {
+    if (this.cache.size <= this.cacheSize) {
+      return;
+    }
+    let deleteCount = this.cache.size - this.cacheSize;
+    for (const page of this.cache.valuesFromOldest()) {
+      if (page.dirty === false) {
+        deleteCount--;
+        this.cache.delete(page.addr);
+        if (deleteCount <= 0) {
+          break;
+        }
+      }
     }
   }
 
@@ -131,6 +161,22 @@ export class PagedFile {
       page.nextAddr = nextAddr;
     }
     return resolvedPageAddr;
+  }
+
+  private readPageContent(page: RootPage | EntryPage): PageBuffer {
+    if (page.nextAddr === 0) {
+      return page.getContent();
+    }
+    return this.readDataPage(page.getContent(), page.nextAddr);
+  }
+
+  private readDataPage(content: PageBuffer, pageAddr: number): PageBuffer {
+    const page = this.getDataPage(pageAddr, true);
+    const expendedContent = content.mergeWith(page.getContent());
+    if (page.nextAddr === 0) {
+      return expendedContent;
+    }
+    return this.readDataPage(expendedContent, page.nextAddr);
   }
 
   private getLastEmptylistPage(): EmptylistPage | null {

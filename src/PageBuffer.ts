@@ -73,6 +73,18 @@ export class PageBuffer {
     );
   }
 
+  public mergeWith(other: PageBuffer): PageBuffer {
+    const size = this.byteLength + other.byteLength;
+    const resultArr = new Uint8Array(size);
+    resultArr.set(this.buffer);
+    resultArr.set(other.reset().read.buffer(other.byteLength), this.byteLength);
+    return new PageBuffer(resultArr);
+  }
+
+  public get byteLength() {
+    return this.buffer.byteLength;
+  }
+
   public get position() {
     return this._position;
   }
@@ -302,6 +314,11 @@ class PageBufferRead {
     if (this.isNext) {
       this.parent.pos += len;
     }
+    return buf;
+  }
+
+  copyReadonly() {
+    const buf = this.parent.buffer.subarray();
     return buf;
   }
 

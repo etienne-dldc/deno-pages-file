@@ -54,6 +54,10 @@ export class Page {
     return this.#type;
   }
 
+  get dirty(): boolean {
+    return this.#dirty;
+  }
+
   get nextAddr() {
     return this.#nextAddr;
   }
