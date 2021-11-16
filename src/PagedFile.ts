@@ -45,18 +45,41 @@ export class PagedFile {
     this.memoryPageCount = pageCount === 0 ? 1 : pageCount;
   }
 
-  public readRoot(): PageBuffer {
+  public readRootPage(): PageBuffer {
     const page = this.getRootPage();
     return page.getContent();
   }
 
-  public writeRoot(content: Uint8Array): void {
+  public writeRootPage(content: Uint8Array): void {
     const page = this.getRootPage();
     this.writePageContent(page, content);
   }
 
+  public readPage(
+    addr: number,
+    expectedType: number = PageType.Entry
+  ): PageBuffer {
+    const page = this.getEntryPage(addr, expectedType, true);
+    return page.getContent();
+  }
+
+  public writePage(
+    addr: number,
+    content: Uint8Array,
+    expectedType: number = PageType.Entry
+  ): void {
+    const page = this.getEntryPage(addr, expectedType, true);
+    this.writePageContent(page, content);
+  }
+
+  public createPage(pageType: number = PageType.Entry): number {
+    const page = this.getEntryPage(this.getEmptyPageAddr(), pageType, false);
+    return page.addr;
+  }
+
   public save() {
     // TODO: Optimize space
+    // TODO: Optimize cache
     this.cache.forEach((page) => {
       if (page.addr >= this.filePageCount) {
         this.filePageCount = page.addr + 1;
@@ -75,8 +98,9 @@ export class PagedFile {
       page.nextAddr = 0;
     } else {
       page.setContent(content.subarray(0, page.contentLenth));
+      const currentNextAddress = page.nextAddr;
       const nextAddr = this.writeToDataPage(
-        page.nextAddr,
+        currentNextAddress,
         page.addr,
         content.subarray(page.contentLenth)
       );
@@ -90,7 +114,7 @@ export class PagedFile {
     content: Uint8Array
   ): number {
     const resolvedPageAddr =
-      pageAddr === 0 ? this.getNextEmptyPageAddr() : pageAddr;
+      pageAddr === 0 ? this.getEmptyPageAddr() : pageAddr;
     const page = this.getDataPage(resolvedPageAddr, false);
     page.prevAddr = prevAddr;
     if (content.byteLength <= page.contentLenth) {
@@ -121,7 +145,7 @@ export class PagedFile {
     return emptylistPage;
   }
 
-  private getNextEmptyPageAddr(): number {
+  private getEmptyPageAddr(): number {
     const emptylistPage = this.getLastEmptylistPage();
     if (emptylistPage === null) {
       // No emptylist add page at the end
@@ -130,12 +154,15 @@ export class PagedFile {
       return pageAddr;
     }
     if (emptylistPage.empty) {
+      this.emptyPage(emptylistPage);
       // Empty empty list => remove next page from prev and use emptylist as new empty page
       if (emptylistPage.prevAddr === 0) {
+        // prev is root
         const root = this.getRootPage();
         root.emptylistAddr = 0;
         return emptylistPage.addr;
       }
+      // prev is another emptylist
       const prevPage = this.getEmptylistPage(emptylistPage.prevAddr, true);
       prevPage.nextAddr = 0;
       return emptylistPage.addr;
@@ -190,6 +217,20 @@ export class PagedFile {
     return this.ensurePageType(
       this.getPage(0, PageType.Root, false),
       PageType.Root
+    );
+  }
+
+  private getEntryPage(
+    addr: number,
+    expectedType: number,
+    mustExist: boolean
+  ): EntryPage {
+    if (expectedType <= PageType.Data) {
+      throw new Error(`Invalid page type: Must be > ${PageType.Data}`);
+    }
+    return this.ensurePageType(
+      this.getPage(addr, expectedType, mustExist),
+      expectedType
     );
   }
 
@@ -323,11 +364,11 @@ export class PagedFile {
 
   protected printPage(page: Page): void {
     if (page.type === PageType.Empty) {
-      console.log(`${("000" + page.addr).slice(-3)}: Empty`);
+      console.info(`${("000" + page.addr).slice(-3)}: Empty`);
       return;
     }
     if (page instanceof RootPage) {
-      console.log(
+      console.info(
         `${("000" + page.addr).slice(-3)}: Root [pageSize: ${
           page.pageSize
         }, emptylistAddr: ${page.emptylistAddr}, nextAddr: ${page.nextAddr}]`
@@ -335,16 +376,17 @@ export class PagedFile {
       return;
     }
     if (page instanceof EmptylistPage) {
-      console.log(
+      console.info(
         `${("000" + page.addr).slice(-3)}: Emptylist [prevAddr: ${
           page.prevAddr
-        }, count: ${page.count}, nextAddr: ${page.nextAddr}]`
+        }, count: ${page.count}, nextAddr: ${
+          page.nextAddr
+        }] Pages: ${page.emptyPages.join(", ")}`
       );
-      console.log(`               Pages: ${page.emptyPages.join(", ")}`);
       return;
     }
     if (page instanceof DataPage) {
-      console.log(
+      console.info(
         `${("000" + page.addr).slice(-3)}: Data [prevAddr: ${
           page.prevAddr
         }, nextAddr: ${page.nextAddr}]`
@@ -352,7 +394,7 @@ export class PagedFile {
       return;
     }
     if (page instanceof EntryPage) {
-      console.log(
+      console.info(
         `${("000" + page.addr).slice(-3)}: Entry(${page.type}) [nextAddr: ${
           page.nextAddr
         }]`
@@ -364,7 +406,7 @@ export class PagedFile {
 
   protected printBuffer(addr: number, buffer: Uint8Array): void {
     if (buffer[0] === PageType.Empty) {
-      console.log(`${("000" + addr).slice(-3)}: Empty`);
+      console.info(`${("000" + addr).slice(-3)}: Empty`);
       return;
     }
     if (buffer[0] === PageType.Root) {
@@ -388,9 +430,9 @@ export class PagedFile {
   }
 
   debug({ includeMemory = true }: { includeMemory?: boolean } = {}) {
-    console.log("=======");
+    console.info("=======");
     if (this.filePageCount === 0) {
-      console.log(" <Empty File>");
+      console.info(" <Empty File>");
       return;
     }
     for (let addr = 0; addr < this.filePageCount; addr++) {

@@ -5,6 +5,7 @@ export enum PageType {
   Root = 1,
   Emptylist = 2,
   Data = 3,
+  Entry = 4,
 }
 
 // type | nextPage | header | content
