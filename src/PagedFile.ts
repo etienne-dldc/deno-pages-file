@@ -22,13 +22,13 @@ export class PagedFile {
   public readonly path: string;
   public readonly pageSize: number;
   public readonly cacheSize: number;
+
   private readonly file: Deno.File;
   private readonly cache = new LeastRecentlyUsedMap<number, Page>();
 
-  // Number of pages in the document (written on file)
-  private filePageCount: number;
-  // Number of pages in the document (in cache)
-  private memoryPageCount: number;
+  private isClosed = false;
+  private filePageCount: number; // Number of pages in the document (written on file)
+  private memoryPageCount: number; // Number of pages in the document (in cache)
 
   constructor(
     path: string,
@@ -59,11 +59,19 @@ export class PagedFile {
   }
 
   public readRootPage(): Uint8Array {
+    if (this.isClosed) {
+      throw new Error(`Cannot read closed file`);
+    }
     const page = this.getRootPage();
-    return this.readPageContent(page).read.copyReadonly();
+    const result = this.readPageContent(page).read.copyReadonly();
+    this.checkCache();
+    return result;
   }
 
   public writeRootPage(content: Uint8Array): void {
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed file`);
+    }
     const page = this.getRootPage();
     this.writePageContent(page, content);
   }
@@ -72,8 +80,13 @@ export class PagedFile {
     addr: number,
     expectedType: number = PageType.Entry
   ): Uint8Array {
+    if (this.isClosed) {
+      throw new Error(`Cannot read closed file`);
+    }
     const page = this.getEntryPage(addr, expectedType, true);
-    return this.readPageContent(page).read.copyReadonly();
+    const result = this.readPageContent(page).read.copyReadonly();
+    this.checkCache();
+    return result;
   }
 
   public writePage(
@@ -81,28 +94,44 @@ export class PagedFile {
     content: Uint8Array,
     expectedType: number = PageType.Entry
   ): void {
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed file`);
+    }
     const page = this.getEntryPage(addr, expectedType, true);
     this.writePageContent(page, content);
   }
 
   public createPage(pageType: number = PageType.Entry): number {
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed file`);
+    }
     const page = this.getEntryPage(this.getEmptyPageAddr(), pageType, false);
     return page.addr;
   }
 
   public save() {
-    // TODO: Optimize space
-    // TODO: Optimize cache
-    for (const page of this.cache.valuesFromOldest()) {
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed file`);
+    }
+    this.cache.traverseFromOldest((page) => {
       if (page.addr >= this.filePageCount) {
         this.filePageCount = page.addr + 1;
       }
       page.writeTo(this.file);
-    }
+    });
     if (this.memoryPageCount !== this.filePageCount) {
       throw new Error("What ?");
     }
     this.checkCache();
+  }
+
+  public close() {
+    this.file.close();
+    this.isClosed = true;
+  }
+
+  public get closed() {
+    return this.isClosed;
   }
 
   private checkCache() {
@@ -110,15 +139,16 @@ export class PagedFile {
       return;
     }
     let deleteCount = this.cache.size - this.cacheSize;
-    for (const page of this.cache.valuesFromOldest()) {
+    this.cache.traverseFromOldest((page) => {
       if (page.dirty === false) {
         deleteCount--;
         this.cache.delete(page.addr);
         if (deleteCount <= 0) {
-          break;
+          // stop the loop
+          return false;
         }
       }
-    }
+    });
   }
 
   private writePageContent(page: RootPage | EntryPage, content: Uint8Array) {

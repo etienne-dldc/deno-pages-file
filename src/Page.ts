@@ -20,9 +20,9 @@ export class Page {
 
   protected readonly buffer: PageBuffer;
 
-  #dirty: boolean;
-  #nextAddr: number;
-  #type: PageType | number;
+  protected isDirty: boolean;
+  protected nextAddrInternal: number;
+  protected typeInternal: PageType | number;
 
   constructor(
     pageSize: number,
@@ -34,67 +34,67 @@ export class Page {
   ) {
     this.addr = addr;
     this.pageSize = pageSize;
-    this.#type = type;
-    this.#dirty = isCreated;
+    this.typeInternal = type;
+    this.isDirty = isCreated;
     this.buffer = new PageBuffer(buffer, 1, () => {
-      this.#dirty = true;
-      if (this.#type === PageType.Empty) {
+      this.isDirty = true;
+      if (this.typeInternal === PageType.Empty) {
         throw new Error("Cannot write on cleared page");
       }
     });
     this.nextAddrOffset = this.buffer.position;
-    this.#nextAddr = this.buffer.readNext.uint16();
+    this.nextAddrInternal = this.buffer.readNext.uint16();
     this.headerOffset = this.buffer.position;
     this.headerLenth = headerLenth;
     this.contentOffset = this.buffer.position + headerLenth;
     this.contentLenth = this.pageSize - this.contentOffset;
   }
 
-  get type(): PageType | number {
-    return this.#type;
+  public get type(): PageType | number {
+    return this.typeInternal;
   }
 
-  get dirty(): boolean {
-    return this.#dirty;
+  public get dirty(): boolean {
+    return this.isDirty;
   }
 
-  get nextAddr() {
-    return this.#nextAddr;
+  public get nextAddr() {
+    return this.nextAddrInternal;
   }
 
-  set nextAddr(addr: number) {
-    if (addr === this.#nextAddr) {
+  public set nextAddr(addr: number) {
+    if (addr === this.nextAddrInternal) {
       return;
     }
-    this.#nextAddr = addr;
+    this.nextAddrInternal = addr;
     this.seekToNextAddr().writeNext.uint16(addr);
   }
 
-  clear() {
-    if (this.#type === PageType.Empty) {
+  public clear() {
+    if (this.typeInternal === PageType.Empty) {
       return;
     }
     this.buffer.seek(0).writeNext.uint8(PageType.Empty);
     this.buffer.write.buffer(new Uint8Array(this.pageSize - 1));
-    this.#type = PageType.Empty;
+    this.typeInternal = PageType.Empty;
   }
 
   // return a new buffer with the content
-  getContent(): PageBuffer {
+  public getContent(): PageBuffer {
     return this.buffer
       .seek(this.contentOffset)
       .read.pageBuffer(this.contentLenth);
   }
 
-  setContent(content: Uint8Array): void {
+  public setContent(content: Uint8Array): void {
     if (content.byteLength > this.contentLenth) {
       throw new Error(`Payload too large`);
     }
     return this.buffer.seek(this.contentOffset).write.buffer(content);
   }
 
-  writeTo(file: Deno.File) {
-    if (this.#dirty === false) {
+  public writeTo(file: Deno.File) {
+    if (this.isDirty === false) {
       return;
     }
     const offset = this.pageSize * this.addr;
@@ -106,7 +106,7 @@ export class Page {
       }
       i += nwrite;
     }
-    this.#dirty = false;
+    this.isDirty = false;
   }
 
   protected seekToNextAddr(): PageBuffer {
@@ -124,8 +124,8 @@ export class Page {
 
 // Header: pageSize(2) | emptylistAddr(2)
 export class RootPage extends Page {
-  #emptylistAddr: number;
-  #emptylistAddrOffset: number;
+  protected emptylistAddrInternal: number;
+  protected emptylistAddrOffsetInternal: number;
 
   constructor(pageSize: number, buffer: Uint8Array, isCreated: boolean) {
     const headerLenth = 4; // pageSize(2) | emptylistAddr(2)
@@ -139,29 +139,30 @@ export class RootPage extends Page {
         throw new Error(`Page size mismatch ${pageSize} === ${storedPageSize}`);
       }
     }
-    this.#emptylistAddrOffset = this.buffer.position;
-    this.#emptylistAddr = this.buffer.readNext.uint16();
+    this.emptylistAddrOffsetInternal = this.buffer.position;
+    this.emptylistAddrInternal = this.buffer.readNext.uint16();
   }
 
-  get emptylistAddr() {
-    return this.#emptylistAddr;
+  public get emptylistAddr() {
+    return this.emptylistAddrInternal;
   }
 
-  set emptylistAddr(addr: number) {
-    if (addr === this.#emptylistAddr) {
+  public set emptylistAddr(addr: number) {
+    if (addr === this.emptylistAddrInternal) {
       return;
     }
-    this.#emptylistAddr = addr;
-    this.buffer.seek(this.#emptylistAddrOffset).writeNext.uint16(addr);
+    this.emptylistAddrInternal = addr;
+    this.buffer.seek(this.emptylistAddrOffsetInternal).writeNext.uint16(addr);
   }
 }
 
 export class EmptylistPage extends Page {
-  #prevAddr: number;
-  #count: number;
-  #countOffset: number;
-  #emptyPages: Array<number> = [];
-  #capacity: number;
+  public readonly capacity: number;
+
+  protected prevAddrInternal: number;
+  protected countInternal: number;
+  protected countOffsetInternal: number;
+  protected emptyPagesInternal: Array<number> = [];
 
   constructor(
     pageSize: number,
@@ -171,50 +172,52 @@ export class EmptylistPage extends Page {
   ) {
     const headerLenth = 4; // prevAddr(2) | count(2)
     super(pageSize, addr, buffer, PageType.Emptylist, isCreated, headerLenth);
-    this.#prevAddr = this.buffer.readNext.uint16();
-    this.#countOffset = this.buffer.position;
-    this.#count = this.buffer.readNext.uint16();
-    this.#capacity = Math.floor(this.contentLenth / 2); // 2 byte per addr
-    while (this.#emptyPages.length < this.#count) {
-      this.#emptyPages.push(this.buffer.readNext.uint16());
+    this.prevAddrInternal = this.buffer.readNext.uint16();
+    this.countOffsetInternal = this.buffer.position;
+    this.countInternal = this.buffer.readNext.uint16();
+    this.capacity = Math.floor(this.contentLenth / 2); // 2 byte per addr
+    while (this.emptyPagesInternal.length < this.countInternal) {
+      this.emptyPagesInternal.push(this.buffer.readNext.uint16());
     }
   }
 
-  get prevAddr() {
-    return this.#prevAddr;
+  public get prevAddr() {
+    return this.prevAddrInternal;
   }
 
-  set prevAddr(addr: number) {
-    if (addr === this.#prevAddr) {
+  public set prevAddr(addr: number) {
+    if (addr === this.prevAddrInternal) {
       return;
     }
-    this.#prevAddr = addr;
+    this.prevAddrInternal = addr;
     this.seekToHeader().writeNext.uint16(addr);
   }
 
-  get count() {
-    return this.#count;
+  public get count() {
+    return this.countInternal;
   }
 
-  get empty() {
-    return this.#emptyPages.length === 0;
+  public get empty() {
+    return this.emptyPagesInternal.length === 0;
   }
 
-  get full() {
-    return this.#emptyPages.length === this.#capacity;
+  public get full() {
+    return this.emptyPagesInternal.length === this.capacity;
   }
 
-  get emptyPages(): ReadonlyArray<number> {
-    return [...this.#emptyPages];
+  public get emptyPages(): ReadonlyArray<number> {
+    return [...this.emptyPagesInternal];
   }
 
   public pop(): number {
-    if (this.#count === 0) {
+    if (this.countInternal === 0) {
       throw new Error(`Cannot pop empty list: no addrs`);
     }
-    this.#count -= 1;
-    this.buffer.seek(this.#countOffset).writeNext.uint16(this.#count);
-    const poped = this.#emptyPages.pop();
+    this.countInternal -= 1;
+    this.buffer
+      .seek(this.countOffsetInternal)
+      .writeNext.uint16(this.countInternal);
+    const poped = this.emptyPagesInternal.pop();
     if (poped === undefined) {
       throw new Error(`Pop returned undefied`);
     }
@@ -225,15 +228,15 @@ export class EmptylistPage extends Page {
     if (this.full) {
       throw new Error("Cannot push into full empty list");
     }
-    const pos = this.contentOffset + 2 * this.#emptyPages.length;
+    const pos = this.contentOffset + 2 * this.emptyPagesInternal.length;
     this.buffer.seek(pos).write.uint16(addr);
-    this.#count += 1;
-    this.#emptyPages.push(addr);
+    this.countInternal += 1;
+    this.emptyPagesInternal.push(addr);
   }
 }
 
 export class DataPage extends Page {
-  #prevAddr: number;
+  protected prevAddrInternal: number;
 
   constructor(
     pageSize: number,
@@ -244,18 +247,18 @@ export class DataPage extends Page {
     const headerLenth = 2; // prevPageIndex
     super(pageSize, addr, buffer, PageType.Data, isCreated, headerLenth);
 
-    this.#prevAddr = this.buffer.readNext.uint16();
+    this.prevAddrInternal = this.buffer.readNext.uint16();
   }
 
-  get prevAddr() {
-    return this.#prevAddr;
+  public get prevAddr() {
+    return this.prevAddrInternal;
   }
 
-  set prevAddr(addr: number) {
-    if (addr === this.#prevAddr) {
+  public set prevAddr(addr: number) {
+    if (addr === this.prevAddrInternal) {
       return;
     }
-    this.#prevAddr = addr;
+    this.prevAddrInternal = addr;
     this.seekToHeader().writeNext.uint16(addr);
   }
 }

@@ -9,15 +9,16 @@ type Entry<K, T> = {
 };
 
 export class LeastRecentlyUsedMap<K, T> {
-  private map = new Map<K, Entry<K, T>>();
-  private newest: Entry<K, T> | null = null;
-  private oldest: Entry<K, T> | null = null;
+  protected readonly map = new Map<K, Entry<K, T>>();
 
-  get size() {
+  protected newest: Entry<K, T> | null = null;
+  protected oldest: Entry<K, T> | null = null;
+
+  public get size() {
     return this.map.size;
   }
 
-  add(key: K, val: T) {
+  public add(key: K, val: T) {
     const entry: Entry<K, T> = {
       key,
       value: val,
@@ -30,12 +31,12 @@ export class LeastRecentlyUsedMap<K, T> {
     if (this.oldest === null) this.oldest = entry;
   }
 
-  set(key: K, val: T) {
+  public set(key: K, val: T) {
     this.delete(key);
     this.add(key, val);
   }
 
-  get(key: K): T | undefined {
+  public get(key: K): T | undefined {
     const entry = this.map.get(key);
     if (entry === undefined) return undefined;
     if (entry !== this.newest) {
@@ -54,7 +55,7 @@ export class LeastRecentlyUsedMap<K, T> {
     return entry.value;
   }
 
-  delete(key: K) {
+  public delete(key: K) {
     const entry = this.map.get(key);
     if (entry === undefined) return false;
     this.map.delete(key);
@@ -72,15 +73,15 @@ export class LeastRecentlyUsedMap<K, T> {
     return true;
   }
 
-  *valuesFromOldest(): Generator<T> {
+  /**
+   * Return false in cb to stop the loop
+   */
+  public traverseFromOldest(cb: (val: T, key: K) => void | false) {
     for (let node = this.oldest; node !== null; node = node.newer) {
-      yield node.value;
-    }
-  }
-
-  *[Symbol.iterator](): Generator<[K, T]> {
-    for (let node = this.oldest; node !== null; node = node.newer) {
-      yield [node.key, node.value];
+      const res = cb(node.value, node.key);
+      if (!res) {
+        break;
+      }
     }
   }
 }
