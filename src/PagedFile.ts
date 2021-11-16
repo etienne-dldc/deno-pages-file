@@ -13,7 +13,7 @@ const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
 );
 
-export type Options = {
+export type PagedFileOptions = {
   pageSize?: number;
   cacheSize?: number;
 };
@@ -35,7 +35,7 @@ export class PagedFile {
     {
       pageSize = 4096,
       cacheSize = Math.round((8 * 1024 * 1024) / pageSize),
-    }: Options = {}
+    }: PagedFileOptions = {}
   ) {
     if (VALID_PAGE_SIZE.includes(pageSize) === false) {
       throw new Error(`Invalid pageSize.`);
