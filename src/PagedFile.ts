@@ -22,10 +22,17 @@ export type InstantiatePage = (
   isNew: boolean
 ) => EntryPage;
 
+export type InstantiateRootPage = (
+  pageSize: number,
+  buffer: Uint8Array,
+  isNew: boolean
+) => RootPage;
+
 export type PagedFileOptions = {
   pageSize?: number;
   cacheSize?: number;
   instantiatePage?: InstantiatePage;
+  instantiateRootPage?: InstantiateRootPage;
 };
 
 export class PagedFile {
@@ -40,6 +47,7 @@ export class PagedFile {
   private filePageCount: number; // Number of pages in the document (written on file)
   private memoryPageCount: number; // Number of pages in the document (in cache)
   private instantiateEntryPage?: InstantiatePage;
+  private instantiateRootPage?: InstantiateRootPage;
 
   constructor(
     path: string,
@@ -421,6 +429,9 @@ export class PagedFile {
       throw new Error(`Cannot instantiate empty pagbe`);
     }
     if (type === PageType.Root) {
+      if (this.instantiateRootPage) {
+        return this.instantiateRootPage(this.pageSize, buffer, isNew);
+      }
       return new RootPage(this.pageSize, buffer, isNew);
     }
     if (type === PageType.Emptylist) {
