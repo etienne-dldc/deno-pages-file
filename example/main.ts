@@ -1,5 +1,5 @@
 import { resolve } from "https://deno.land/std/path/mod.ts";
-import { PagedFile } from "../src/mod.ts";
+import { PagedFile } from "../mod.ts";
 
 const path = resolve(Deno.cwd(), "file.db");
 
