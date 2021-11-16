@@ -17,30 +17,31 @@ export class Page {
   public readonly headerLenth: number;
   public readonly headerOffset: number;
   public readonly pageSize: number;
+  public readonly type: PageType | number;
 
   protected readonly buffer: PageBuffer;
 
   protected isDirty: boolean;
+  protected isDeleted = false;
   protected nextAddrInternal: number;
-  protected typeInternal: PageType | number;
 
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
     type: PageType | number,
-    isCreated: boolean,
+    isDirty: boolean,
     headerLenth: number
   ) {
     this.addr = addr;
     this.pageSize = pageSize;
-    this.typeInternal = type;
-    this.isDirty = isCreated;
+    this.type = type;
+    this.isDirty = isDirty;
     this.buffer = new PageBuffer(buffer, 1, () => {
-      this.isDirty = true;
-      if (this.typeInternal === PageType.Empty) {
-        throw new Error("Cannot write on cleared page");
+      if (this.isDeleted) {
+        throw new Error("Cannot write on deleted page");
       }
+      this.isDirty = true;
     });
     this.nextAddrOffset = this.buffer.position;
     this.nextAddrInternal = this.buffer.readNext.uint16();
@@ -48,10 +49,6 @@ export class Page {
     this.headerLenth = headerLenth;
     this.contentOffset = this.buffer.position + headerLenth;
     this.contentLenth = this.pageSize - this.contentOffset;
-  }
-
-  public get type(): PageType | number {
-    return this.typeInternal;
   }
 
   public get dirty(): boolean {
@@ -70,13 +67,11 @@ export class Page {
     this.seekToNextAddr().writeNext.uint16(addr);
   }
 
-  public clear() {
-    if (this.typeInternal === PageType.Empty) {
+  public markDeleted() {
+    if (this.isDeleted) {
       return;
     }
-    this.buffer.seek(0).writeNext.uint8(PageType.Empty);
-    this.buffer.write.buffer(new Uint8Array(this.pageSize - 1));
-    this.typeInternal = PageType.Empty;
+    this.isDeleted = true;
   }
 
   // return a new buffer with the content
@@ -127,11 +122,11 @@ export class RootPage extends Page {
   protected emptylistAddrInternal: number;
   protected emptylistAddrOffsetInternal: number;
 
-  constructor(pageSize: number, buffer: Uint8Array, isCreated: boolean) {
+  constructor(pageSize: number, buffer: Uint8Array, isNew: boolean) {
     const headerLenth = 4; // pageSize(2) | emptylistAddr(2)
-    super(pageSize, 0, buffer, PageType.Root, isCreated, headerLenth);
+    super(pageSize, 0, buffer, PageType.Root, isNew, headerLenth);
     // read or write page size
-    if (isCreated) {
+    if (isNew) {
       this.buffer.writeNext.uint16(pageSize);
     } else {
       const storedPageSize = this.buffer.readNext.uint16();
@@ -168,10 +163,10 @@ export class EmptylistPage extends Page {
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    isCreated: boolean
+    isNew: boolean
   ) {
     const headerLenth = 4; // prevAddr(2) | count(2)
-    super(pageSize, addr, buffer, PageType.Emptylist, isCreated, headerLenth);
+    super(pageSize, addr, buffer, PageType.Emptylist, isNew, headerLenth);
     this.prevAddrInternal = this.buffer.readNext.uint16();
     this.countOffsetInternal = this.buffer.position;
     this.countInternal = this.buffer.readNext.uint16();
@@ -242,10 +237,10 @@ export class DataPage extends Page {
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    isCreated: boolean
+    isNew: boolean
   ) {
     const headerLenth = 2; // prevPageIndex
-    super(pageSize, addr, buffer, PageType.Data, isCreated, headerLenth);
+    super(pageSize, addr, buffer, PageType.Data, isNew, headerLenth);
 
     this.prevAddrInternal = this.buffer.readNext.uint16();
   }
@@ -268,17 +263,19 @@ export class EntryPage extends Page {
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    expectedType: number,
-    isCreated: boolean
+    type: number,
+    isNew: boolean,
+    headerLenth: number = 0
   ) {
-    if (
-      expectedType === PageType.Root ||
-      expectedType === PageType.Emptylist ||
-      expectedType === PageType.Data
-    ) {
+    if (type < PageType.Entry) {
       throw new Error(`Inavlid page type`);
     }
-    const headerLenth = 0;
-    super(pageSize, addr, buffer, expectedType, isCreated, headerLenth);
+    super(pageSize, addr, buffer, type, isNew, headerLenth);
+  }
+}
+
+export class EmptyPage extends Page {
+  constructor(pageSize: number, addr: number) {
+    super(pageSize, addr, new Uint8Array(pageSize), PageType.Empty, true, 0);
   }
 }

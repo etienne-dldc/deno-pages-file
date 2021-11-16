@@ -28,3 +28,5 @@ file.writeRootPage(
 );
 
 file.save();
+
+file.debug();

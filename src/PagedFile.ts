@@ -6,6 +6,7 @@ import {
   Page,
   PageType,
   RootPage,
+  EmptyPage,
 } from "./Page.ts";
 import { PageBuffer } from "./PageBuffer.ts";
 
@@ -13,9 +14,18 @@ const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
 );
 
+export type InstantiatePage = (
+  pageSize: number,
+  addr: number,
+  buffer: Uint8Array,
+  type: number,
+  isNew: boolean
+) => EntryPage;
+
 export type PagedFileOptions = {
   pageSize?: number;
   cacheSize?: number;
+  instantiatePage?: InstantiatePage;
 };
 
 export class PagedFile {
@@ -29,17 +39,20 @@ export class PagedFile {
   private isClosed = false;
   private filePageCount: number; // Number of pages in the document (written on file)
   private memoryPageCount: number; // Number of pages in the document (in cache)
+  private instantiateEntryPage?: InstantiatePage;
 
   constructor(
     path: string,
     {
       pageSize = 4096,
       cacheSize = Math.round((8 * 1024 * 1024) / pageSize),
+      instantiatePage,
     }: PagedFileOptions = {}
   ) {
     if (VALID_PAGE_SIZE.includes(pageSize) === false) {
       throw new Error(`Invalid pageSize.`);
     }
+    this.instantiateEntryPage = instantiatePage;
     this.pageSize = pageSize;
     this.cacheSize = cacheSize;
     this.path = path;
@@ -109,6 +122,16 @@ export class PagedFile {
     return page.addr;
   }
 
+  public deletePage(addr: number, pageType: number = PageType.Entry) {
+    if (addr === 0) {
+      return;
+    }
+    const page = this.getPage(addr, pageType, true);
+    this.emptyPage(page);
+    this.addAddrToEmptylist(page.addr);
+    this.deleteDataPage(page.nextAddr);
+  }
+
   public save() {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
@@ -119,9 +142,6 @@ export class PagedFile {
       }
       page.writeTo(this.file);
     });
-    if (this.memoryPageCount !== this.filePageCount) {
-      throw new Error("What ?");
-    }
     this.checkCache();
   }
 
@@ -154,7 +174,7 @@ export class PagedFile {
   private writePageContent(page: RootPage | EntryPage, content: Uint8Array) {
     if (content.byteLength <= page.contentLenth) {
       page.setContent(content);
-      this.deletePage(page.nextAddr);
+      this.deleteDataPage(page.nextAddr);
       page.nextAddr = 0;
     } else {
       page.setContent(content.subarray(0, page.contentLenth));
@@ -179,7 +199,7 @@ export class PagedFile {
     page.prevAddr = prevAddr;
     if (content.byteLength <= page.contentLenth) {
       page.setContent(content);
-      this.deletePage(page.nextAddr);
+      this.deleteDataPage(page.nextAddr);
       page.nextAddr = 0;
     } else {
       page.setContent(content.subarray(0, page.contentLenth));
@@ -246,18 +266,19 @@ export class PagedFile {
     return emptylistPage.pop();
   }
 
-  private deletePage(addr: number) {
+  private deleteDataPage(addr: number) {
     if (addr === 0) {
       return;
     }
     const page = this.getPage(addr, PageType.Data, true);
     this.emptyPage(page);
     this.addAddrToEmptylist(page.addr);
-    this.deletePage(page.nextAddr);
+    this.deleteDataPage(page.nextAddr);
   }
 
   private emptyPage(page: Page) {
-    page.clear();
+    page.markDeleted();
+    this.cache.set(page.addr, new EmptyPage(this.pageSize, page.addr));
   }
 
   private addAddrToEmptylist(addr: number) {
@@ -346,12 +367,12 @@ export class PagedFile {
       }
       return cached;
     }
-    const [buffer, isCreated] = this.getPageBuffer(
+    const [buffer, isNew] = this.getPageBuffer(
       pageAddr,
       expectedType,
       mustExist
     );
-    const page = this.instantiatePage(pageAddr, buffer, isCreated || isEmpty);
+    const page = this.instantiatePage(pageAddr, buffer, isNew || isEmpty);
     this.cache.set(pageAddr, page);
     return page;
   }
@@ -363,7 +384,7 @@ export class PagedFile {
     pageAddr: number,
     expectedType: number,
     mustExist: boolean
-  ): [buffer: Uint8Array, isCreated: boolean] {
+  ): [buffer: Uint8Array, isNew: boolean] {
     const isOnFile = pageAddr < this.filePageCount;
     if (pageAddr >= this.memoryPageCount) {
       throw new Error(`What ?`);
@@ -374,8 +395,7 @@ export class PagedFile {
     if (isOnFile) {
       const buffer = this.readPageBuffer(pageAddr);
       if (buffer[0] === PageType.Empty) {
-        // if page is empty => same as new page
-        const buffer = new Uint8Array(this.pageSize);
+        // if page is empty => change type (empty page buffer is empty so we can reuse it)
         buffer[0] = expectedType;
         return [buffer, true];
       }
@@ -394,22 +414,31 @@ export class PagedFile {
   private instantiatePage(
     pageAddr: number,
     buffer: Uint8Array,
-    isCreated: boolean
+    isNew: boolean
   ): Page {
     const type: PageType = buffer[0];
     if (type === PageType.Empty) {
       throw new Error(`Cannot instantiate empty pagbe`);
     }
     if (type === PageType.Root) {
-      return new RootPage(this.pageSize, buffer, isCreated);
+      return new RootPage(this.pageSize, buffer, isNew);
     }
     if (type === PageType.Emptylist) {
-      return new EmptylistPage(this.pageSize, pageAddr, buffer, isCreated);
+      return new EmptylistPage(this.pageSize, pageAddr, buffer, isNew);
     }
     if (type === PageType.Data) {
-      return new DataPage(this.pageSize, pageAddr, buffer, isCreated);
+      return new DataPage(this.pageSize, pageAddr, buffer, isNew);
     }
-    return new EntryPage(this.pageSize, pageAddr, buffer, type, isCreated);
+    if (this.instantiateEntryPage) {
+      return this.instantiateEntryPage(
+        this.pageSize,
+        pageAddr,
+        buffer,
+        type,
+        isNew
+      );
+    }
+    return new EntryPage(this.pageSize, pageAddr, buffer, type, isNew);
   }
 
   private readPageBuffer(pageAddr: number): Uint8Array {
