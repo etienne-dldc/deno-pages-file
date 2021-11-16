@@ -7,6 +7,20 @@
       "command": "run",
       "args": ["--unstable", "-A", "--watch", "main.ts"],
       "problemMatcher": ["$deno"]
+    },
+    {
+      "label": "Run:reload",
+      "type": "deno",
+      "command": "run",
+      "args": ["--unstable", "-A", "--reload", "main.ts"],
+      "problemMatcher": ["$deno"]
+    },
+    {
+      "label": "Run:once",
+      "type": "deno",
+      "command": "run",
+      "args": ["--unstable", "-A", "main.ts"],
+      "problemMatcher": ["$deno"]
     }
   ]
 }
