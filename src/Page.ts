@@ -1,4 +1,11 @@
-import { PageBuffer } from "./PageBuffer.ts";
+import { Block } from "./BufferBlock.ts";
+import {
+  BlocksFixedAny,
+  FixedBlockList,
+  ReadBlock,
+  WriteBlock,
+} from "./BufferBlock.ts";
+import { DirtyManager } from "./DirtyManager.ts";
 
 export enum PageType {
   Empty = 0,
@@ -8,139 +15,45 @@ export enum PageType {
   Entry = 4,
 }
 
-export class Page {
+export type PageAny = Page<BlocksFixedAny>;
+
+export class Page<HeaderBlocks extends BlocksFixedAny> {
   public readonly type: PageType | number;
   public readonly pageSize: number;
   public readonly addr: number;
-  public readonly contentLenth: number;
-  public readonly contentOffset: number;
 
-  protected readonly buffer: PageBuffer;
-
-  protected isDirty: boolean;
+  protected readonly blocks: FixedBlockList<HeaderBlocks>;
+  protected readonly dirtyManager: DirtyManager;
   protected isDeleted = false;
+
+  private readonly buffer: Uint8Array;
 
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    type: PageType | number,
-    isDirty: boolean
-  ) {
-    this.addr = addr;
-    this.pageSize = pageSize;
-    this.type = type;
-    this.isDirty = isDirty;
-    // start at pos 1 to skip type
-    this.buffer = new PageBuffer(buffer, 1, () => {
-      if (this.isDeleted) {
-        throw new Error("Cannot write on deleted page");
-      }
-      this.isDirty = true;
-    });
-    this.contentOffset = this.buffer.position;
-    this.contentLenth = this.pageSize - this.contentOffset;
-  }
-
-  public get dirty(): boolean {
-    return this.isDirty;
-  }
-
-  public markDeleted() {
-    if (this.isDeleted) {
-      return;
-    }
-    this.isDeleted = true;
-  }
-
-  // return a new buffer with the content
-  public getContent(): PageBuffer {
-    return this.buffer
-      .seek(this.contentOffset)
-      .read.pageBuffer(this.contentLenth);
-  }
-
-  public setContent(content: Uint8Array): void {
-    if (content.byteLength > this.contentLenth) {
-      throw new Error(`Payload too large`);
-    }
-    return this.buffer.seek(this.contentOffset).write.buffer(content);
-  }
-
-  public writeTo(file: Deno.File) {
-    if (this.isDirty === false) {
-      return;
-    }
-    const offset = this.pageSize * this.addr;
-    file.seekSync(offset, Deno.SeekMode.Start);
-    for (let i = 0; i < this.pageSize; ) {
-      const nwrite = file.writeSync(this.buffer.subarray(i));
-      if (nwrite <= 0) {
-        throw new Error("Unexpected return value of write(): " + nwrite);
-      }
-      i += nwrite;
-    }
-    this.isDirty = false;
-  }
-}
-
-// type | nextPage | header | content
-export class OldPage {
-  public readonly addr: number;
-  public readonly contentLenth: number;
-  public readonly contentOffset: number;
-  public readonly nextAddrOffset: number;
-  public readonly headerLenth: number;
-  public readonly headerOffset: number;
-  public readonly pageSize: number;
-  public readonly type: PageType | number;
-
-  protected readonly buffer: PageBuffer;
-
-  protected isDirty: boolean;
-  protected isDeleted = false;
-  protected nextAddrInternal: number;
-
-  constructor(
-    pageSize: number,
-    addr: number,
-    buffer: Uint8Array,
+    headerBlocks: HeaderBlocks,
     type: PageType | number,
     isDirty: boolean,
-    headerLenth: number
   ) {
     this.addr = addr;
     this.pageSize = pageSize;
     this.type = type;
-    this.isDirty = isDirty;
-    this.buffer = new PageBuffer(buffer, 1, () => {
-      if (this.isDeleted) {
-        throw new Error("Cannot write on deleted page");
-      }
-      this.isDirty = true;
-    });
-    this.nextAddrOffset = this.buffer.position;
-    this.nextAddrInternal = this.buffer.readNext.uint16();
-    this.headerOffset = this.buffer.position;
-    this.headerLenth = headerLenth;
-    this.contentOffset = this.buffer.position + headerLenth;
-    this.contentLenth = this.pageSize - this.contentOffset;
+    this.buffer = buffer;
+    this.dirtyManager = new DirtyManager(isDirty);
+    this.blocks = new FixedBlockList(
+      buffer.subarray(1),
+      headerBlocks,
+      this.dirtyManager,
+    );
   }
 
   public get dirty(): boolean {
-    return this.isDirty;
+    return this.blocks.dirty;
   }
 
-  public get nextAddr() {
-    return this.nextAddrInternal;
-  }
-
-  public set nextAddr(addr: number) {
-    if (addr === this.nextAddrInternal) {
-      return;
-    }
-    this.nextAddrInternal = addr;
-    this.seekToNextAddr().writeNext.uint16(addr);
+  public get contentLength(): number {
+    return this.blocks.restLength;
   }
 
   public markDeleted() {
@@ -151,147 +64,139 @@ export class OldPage {
   }
 
   // return a new buffer with the content
-  public getContent(): PageBuffer {
-    return this.buffer
-      .seek(this.contentOffset)
-      .read.pageBuffer(this.contentLenth);
+  public readContent(): Uint8Array {
+    return this.blocks.readRest();
   }
 
-  public setContent(content: Uint8Array): void {
-    if (content.byteLength > this.contentLenth) {
-      throw new Error(`Payload too large`);
-    }
-    return this.buffer.seek(this.contentOffset).write.buffer(content);
+  public writeContent(content: Uint8Array): void {
+    this.blocks.writeRest(content);
   }
 
   public writeTo(file: Deno.File) {
-    if (this.isDirty === false) {
+    if (this.dirtyManager.dirty === false) {
       return;
     }
     const offset = this.pageSize * this.addr;
     file.seekSync(offset, Deno.SeekMode.Start);
-    for (let i = 0; i < this.pageSize; ) {
+    for (let i = 0; i < this.pageSize;) {
       const nwrite = file.writeSync(this.buffer.subarray(i));
       if (nwrite <= 0) {
         throw new Error("Unexpected return value of write(): " + nwrite);
       }
       i += nwrite;
     }
-    this.isDirty = false;
-  }
-
-  protected seekToNextAddr(): PageBuffer {
-    return this.buffer.seek(this.nextAddrOffset);
-  }
-
-  protected seekToHeader(): PageBuffer {
-    return this.buffer.seek(this.headerOffset);
-  }
-
-  protected seekToContent(): PageBuffer {
-    return this.buffer.seek(this.contentOffset);
+    this.dirtyManager.markClean();
   }
 }
 
-// Header: pageSize(2) | emptylistAddr(2)
-export class RootPage extends Page {
-  protected emptylistAddrInternal: number;
-  protected emptylistAddrOffsetInternal: number;
+export class EmptyPage extends Page<[]> {
+  constructor(pageSize: number, addr: number) {
+    super(pageSize, addr, new Uint8Array(pageSize), [], PageType.Empty, true);
+  }
+}
 
+const ROOT_HEADER_BLOCKS = [
+  FixedBlockList.named("pageSize", Block.uint16),
+  FixedBlockList.named("emptylistAddr", Block.uint16),
+  FixedBlockList.named("nextPage", Block.uint16),
+] as const;
+
+export class RootPage extends Page<typeof ROOT_HEADER_BLOCKS> {
   constructor(pageSize: number, buffer: Uint8Array, isNew: boolean) {
-    const headerLenth = 4; // pageSize(2) | emptylistAddr(2)
-    super(pageSize, 0, buffer, PageType.Root, isNew, headerLenth);
-    // read or write page size
+    super(pageSize, 0, buffer, ROOT_HEADER_BLOCKS, PageType.Root, isNew);
     if (isNew) {
-      this.buffer.writeNext.uint16(pageSize);
+      this.blocks.write("pageSize", pageSize);
     } else {
-      const storedPageSize = this.buffer.readNext.uint16();
+      const storedPageSize = this.blocks.read("pageSize");
       if (pageSize !== storedPageSize) {
         throw new Error(`Page size mismatch ${pageSize} === ${storedPageSize}`);
       }
     }
-    this.emptylistAddrOffsetInternal = this.buffer.position;
-    this.emptylistAddrInternal = this.buffer.readNext.uint16();
+  }
+
+  public get nextPage() {
+    return this.blocks.read("nextPage");
+  }
+
+  public set nextPage(addr: number) {
+    this.blocks.write("nextPage", addr);
   }
 
   public get emptylistAddr() {
-    return this.emptylistAddrInternal;
+    return this.blocks.read("emptylistAddr");
   }
 
   public set emptylistAddr(addr: number) {
-    if (addr === this.emptylistAddrInternal) {
-      return;
-    }
-    this.emptylistAddrInternal = addr;
-    this.buffer.seek(this.emptylistAddrOffsetInternal).writeNext.uint16(addr);
+    this.blocks.write("emptylistAddr", addr);
   }
 }
 
-export class EmptylistPage extends Page {
-  public readonly capacity: number;
+const EMPTYLIST_HEADER_BLOCKS = [
+  FixedBlockList.named("prevPage", Block.uint16),
+  FixedBlockList.named("nextPage", Block.uint16),
+  FixedBlockList.named("count", Block.uint16),
+] as const;
 
-  protected prevAddrInternal: number;
-  protected countInternal: number;
-  protected countOffsetInternal: number;
-  protected emptyPagesInternal: Array<number> = [];
+export class EmptylistPage extends Page<typeof EMPTYLIST_HEADER_BLOCKS> {
+  public readonly capacity: number;
 
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    isNew: boolean
+    isNew: boolean,
   ) {
-    const headerLenth = 4; // prevAddr(2) | count(2)
-    super(pageSize, addr, buffer, PageType.Emptylist, isNew, headerLenth);
-    this.prevAddrInternal = this.buffer.readNext.uint16();
-    this.countOffsetInternal = this.buffer.position;
-    this.countInternal = this.buffer.readNext.uint16();
-    this.capacity = Math.floor(this.contentLenth / 2); // 2 byte per addr
-    while (this.emptyPagesInternal.length < this.countInternal) {
-      this.emptyPagesInternal.push(this.buffer.readNext.uint16());
-    }
+    super(
+      pageSize,
+      addr,
+      buffer,
+      EMPTYLIST_HEADER_BLOCKS,
+      PageType.Emptylist,
+      isNew,
+    );
+    this.capacity = Math.floor(this.blocks.restLength / ReadBlock.uint16.size); // 2 byte per addrs
   }
 
-  public get prevAddr() {
-    return this.prevAddrInternal;
+  public get prevPage() {
+    return this.blocks.read("prevPage");
   }
 
-  public set prevAddr(addr: number) {
-    if (addr === this.prevAddrInternal) {
-      return;
-    }
-    this.prevAddrInternal = addr;
-    this.seekToHeader().writeNext.uint16(addr);
+  public set prevPage(addr: number) {
+    this.blocks.write("prevPage", addr);
+  }
+
+  public get nextPage() {
+    return this.blocks.read("nextPage");
+  }
+
+  public set nextPage(addr: number) {
+    this.blocks.write("nextPage", addr);
   }
 
   public get count() {
-    return this.countInternal;
+    return this.blocks.read("count");
   }
 
   public get empty() {
-    return this.emptyPagesInternal.length === 0;
+    return this.count === 0;
   }
 
   public get full() {
-    return this.emptyPagesInternal.length === this.capacity;
-  }
-
-  public get emptyPages(): ReadonlyArray<number> {
-    return [...this.emptyPagesInternal];
+    return this.count === this.capacity;
   }
 
   public pop(): number {
-    if (this.countInternal === 0) {
+    const currentCount = this.count;
+    if (currentCount === 0) {
       throw new Error(`Cannot pop empty list: no addrs`);
     }
-    this.countInternal -= 1;
-    this.buffer
-      .seek(this.countOffsetInternal)
-      .writeNext.uint16(this.countInternal);
-    const poped = this.emptyPagesInternal.pop();
-    if (poped === undefined) {
-      throw new Error(`Pop returned undefied`);
+    this.blocks.write("count", currentCount - 1);
+    const offset = (currentCount - 1) * ReadBlock.uint16.size;
+    const poped = ReadBlock.uint16.read(this.blocks.readRest(), offset);
+    if (poped === 0) {
+      throw new Error(`Found 0 in freelist ?`);
     }
+    this.dirtyManager.markDirty();
     return poped;
   }
 
@@ -299,59 +204,78 @@ export class EmptylistPage extends Page {
     if (this.full) {
       throw new Error("Cannot push into full empty list");
     }
-    const pos = this.contentOffset + 2 * this.emptyPagesInternal.length;
-    this.buffer.seek(pos).write.uint16(addr);
-    this.countInternal += 1;
-    this.emptyPagesInternal.push(addr);
+    const currentCount = this.count;
+    this.blocks.write("count", currentCount + 1);
+    const offset = currentCount * ReadBlock.uint16.size;
+    WriteBlock.uint16.write(this.blocks.readRest(), offset, addr);
+    this.dirtyManager.markDirty();
+  }
+
+  public readAtIndex(index: number): number {
+    if (index >= this.count) {
+      throw new Error(`Out of bound read`);
+    }
+    const offset = (index) * ReadBlock.uint16.size;
+    return ReadBlock.uint16.read(this.blocks.readRest(), offset);
   }
 }
 
-export class DataPage extends Page {
-  protected prevAddrInternal: number;
+const DATA_HEADER_BLOCKS = [
+  FixedBlockList.named("prevPage", Block.uint16),
+  FixedBlockList.named("nextPage", Block.uint16),
+] as const;
 
+export class DataPage extends Page<typeof DATA_HEADER_BLOCKS> {
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    isNew: boolean
+    isNew: boolean,
   ) {
-    const headerLenth = 2; // prevPageIndex
-    super(pageSize, addr, buffer, PageType.Data, isNew, headerLenth);
-
-    this.prevAddrInternal = this.buffer.readNext.uint16();
+    super(pageSize, addr, buffer, DATA_HEADER_BLOCKS, PageType.Data, isNew);
   }
 
-  public get prevAddr() {
-    return this.prevAddrInternal;
+  public get prevPage() {
+    return this.blocks.read("prevPage");
   }
 
-  public set prevAddr(addr: number) {
-    if (addr === this.prevAddrInternal) {
-      return;
-    }
-    this.prevAddrInternal = addr;
-    this.seekToHeader().writeNext.uint16(addr);
+  public set prevPage(addr: number) {
+    this.blocks.write("prevPage", addr);
+  }
+
+  public get nextPage() {
+    return this.blocks.read("nextPage");
+  }
+
+  public set nextPage(addr: number) {
+    this.blocks.write("nextPage", addr);
   }
 }
 
-export class EntryPage extends Page {
+const ENTRY_HEADER_BLOCKS = [
+  FixedBlockList.named("prevPage", Block.uint16),
+  FixedBlockList.named("nextPage", Block.uint16),
+] as const;
+
+export class EntryPage extends Page<typeof ENTRY_HEADER_BLOCKS> {
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
     type: number,
     isNew: boolean,
-    headerLenth: number = 0
   ) {
     if (type < PageType.Entry) {
       throw new Error(`Inavlid page type`);
     }
-    super(pageSize, addr, buffer, type, isNew, headerLenth);
+    super(pageSize, addr, buffer, ENTRY_HEADER_BLOCKS, type, isNew);
   }
-}
 
-export class EmptyPage extends Page {
-  constructor(pageSize: number, addr: number) {
-    super(pageSize, addr, new Uint8Array(pageSize), PageType.Empty, true, 0);
+  public get nextPage() {
+    return this.blocks.read("nextPage");
+  }
+
+  public set nextPage(addr: number) {
+    this.blocks.write("nextPage", addr);
   }
 }

@@ -79,7 +79,7 @@ export class LeastRecentlyUsedMap<K, T> {
   public traverseFromOldest(cb: (val: T, key: K) => void | false) {
     for (let node = this.oldest; node !== null; node = node.newer) {
       const res = cb(node.value, node.key);
-      if (!res) {
+      if (res === false) {
         break;
       }
     }

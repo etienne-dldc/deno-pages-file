@@ -1,72 +1,134 @@
 // deno-lint-ignore-file no-explicit-any
-type ReadWriteBlockNamed<N extends string, Value> = {
+import { DirtyManager } from "./DirtyManager.ts";
+
+export type BlockNamed<N extends string, Value> = {
   name: N;
-  write: WriteBlockFixed<Value>;
-  read: ReadBlockFixed<Value>;
+  block: BlockFixed<Value>;
 };
 
-type WriteBlockNamedAny = ReadWriteBlockNamed<string, any>;
+export type BlockNamedAny = BlockNamed<string, any>;
 
-type BlocksFixedAny = ReadonlyArray<WriteBlockNamedAny>;
+export type BlocksFixedAny = ReadonlyArray<BlockNamedAny>;
 
-type BlockNames<Schema extends BlocksFixedAny> = Schema[number]["name"];
+export type BlockNames<Schema extends BlocksFixedAny> = Schema[number]["name"];
 
-type BlockValueByName<
+export type BlockValueByName<
   Schema extends BlocksFixedAny,
   Name extends Schema[number]["name"],
-> = Extract<Schema[number], { name: Name }>;
+> = Extract<Schema[number], { name: Name }> extends BlockNamed<string, infer V>
+  ? V
+  : never;
 
-export class WriteBlockList<FixedBlocks extends BlocksFixedAny> {
-  static named<N extends string, Value>(
+export type FixedBlockListItem = { offset: number; block: BlockFixed<any> };
+
+export type ReadBlockFixed<Value> = {
+  readonly size: number;
+  readonly read: (buffer: Uint8Array, offset: number) => Value;
+};
+
+export type ReadBlockVariable<Value> = {
+  readonly size: (buffer: Uint8Array, offset: number) => number;
+  readonly read: (buffer: Uint8Array, offset: number) => Value;
+};
+
+export type ReadBlock<Value> =
+  | ReadBlockFixed<Value>
+  | ReadBlockVariable<Value>;
+
+export type BlockFixed<Value> = {
+  read: ReadBlockFixed<Value>;
+  write: WriteBlockFixed<Value>;
+};
+
+export type Block<Value> = {
+  read: ReadBlock<Value>;
+  write: WriteBlock<Value>;
+};
+
+export type WriteBlockFixed<Value> = {
+  readonly size: number;
+  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
+};
+
+export type WriteBlockVariable<Value> = {
+  readonly size: (value: Value) => number;
+  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
+};
+
+export type WriteBlock<Value> =
+  | WriteBlockFixed<Value>
+  | WriteBlockVariable<Value>;
+
+export class FixedBlockList<FixedBlocks extends BlocksFixedAny> {
+  public static named<N extends string, Value>(
     name: N,
-    read: ReadBlockFixed<Value>,
-    write: WriteBlockFixed<Value>,
-  ): ReadWriteBlockNamed<N, Value> {
-    return { name, read, write };
+    block: BlockFixed<Value>,
+  ): BlockNamed<N, Value> {
+    return { name, block };
   }
 
+  public readonly schema: FixedBlocks;
+
   private readonly buffer: Uint8Array;
-  private readonly byName = new Map<
-    string,
-    { offset: number; write: WriteBlockFixed<any>; read: ReadBlockFixed<any> }
-  >();
+  private readonly byName = new Map<string, FixedBlockListItem>();
   private readonly lastOffset: number;
 
-  constructor(buffer: Uint8Array, schema: FixedBlocks) {
+  private readonly dirtyManager: DirtyManager;
+
+  constructor(
+    buffer: Uint8Array,
+    schema: FixedBlocks,
+    dirtyManager: DirtyManager = new DirtyManager(),
+  ) {
     this.buffer = buffer;
+    this.schema = schema;
+    this.dirtyManager = dirtyManager;
     let offset = 0;
-    schema.forEach((item) => {
-      if (this.byName.has(item.name)) {
-        throw new Error(`Duplicate name "${item.name}"`);
+    schema.forEach(({ name, block }) => {
+      if (this.byName.has(name)) {
+        throw new Error(`Duplicate name "${name}"`);
       }
-      if (item.read.size !== item.write.size) {
-        throw new Error(`Read / Write mismatch for "${item.name}"`);
+      if (block.read.size !== block.write.size) {
+        throw new Error(`Read / Write mismatch for "${name}"`);
       }
-      this.byName.set(item.name, {
-        offset,
-        read: item.read,
-        write: item.write,
-      });
-      offset += item.read.size;
+      this.byName.set(name, { offset, block });
+      offset += block.read.size;
     });
     this.lastOffset = offset;
   }
 
-  public get restLenth() {
+  public get fixedLength() {
+    return this.lastOffset;
+  }
+
+  public get restOffset() {
+    return this.lastOffset;
+  }
+
+  public get restLength() {
     return this.buffer.byteLength - this.lastOffset;
   }
 
-  read<N extends BlockNames<FixedBlocks>>(
+  public get dirty() {
+    return this.dirtyManager.dirty;
+  }
+
+  public markClean() {
+    this.dirtyManager.markClean();
+  }
+
+  public read<N extends BlockNames<FixedBlocks>>(
     name: N,
   ): BlockValueByName<FixedBlocks, N> {
     const obj = this.byName.get(name);
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
     }
-    return obj.read.read(this.buffer, obj.offset).value;
+    const value = obj.block.read.read(this.buffer, obj.offset);
+    return value;
   }
 
-  write<N extends BlockNames<FixedBlocks>>(
+  public write<N extends BlockNames<FixedBlocks>>(
     name: N,
     value: BlockValueByName<FixedBlocks, N>,
   ): this {
@@ -74,22 +136,30 @@ export class WriteBlockList<FixedBlocks extends BlocksFixedAny> {
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
     }
-    obj.write.write(this.buffer, obj.offset, value);
+    obj.block.write.write(this.buffer, obj.offset, value);
+    this.dirtyManager.markDirty();
     return this;
   }
 
-  readRest(): Uint8Array {
-    return this.buffer.subarray(this.lastOffset);
+  public readRest(): Uint8Array {
+    return this.buffer.subarray(this.restOffset);
   }
 
-  writeRest(content: Uint8Array): this {
-    if (content.byteLength > this.restLenth) {
+  public writeRest(content: Uint8Array): this {
+    if (content.byteLength > this.restLength) {
       throw new Error(
-        `Cannot write buffer of size ${content.byteLength} into rest of size ${this.restLenth}`,
+        `Cannot write buffer of size ${content.byteLength} into rest of size ${this.restLength}`,
       );
     }
     this.buffer.set(content, this.lastOffset);
+    this.dirtyManager.markDirty();
     return this;
+  }
+
+  public restAsFixedBlockList<FixedBlocks extends BlocksFixedAny>(
+    blocks: FixedBlocks,
+  ): FixedBlockList<FixedBlocks> {
+    return new FixedBlockList(this.readRest(), blocks, this.dirtyManager);
   }
 }
 
@@ -194,34 +264,6 @@ export class BufferBlockSeq {
     return true;
   }
 }
-
-export type ReadBlockFixed<Value> = {
-  readonly size: number;
-  readonly read: (buffer: Uint8Array, offset: number) => Value;
-};
-
-export type ReadBlockVariable<Value> = {
-  readonly size: (buffer: Uint8Array, offset: number) => number;
-  readonly read: (buffer: Uint8Array, offset: number) => Value;
-};
-
-export type ReadBlock<Value> =
-  | ReadBlockFixed<Value>
-  | ReadBlockVariable<Value>;
-
-export type WriteBlockFixed<Value> = {
-  readonly size: number;
-  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
-};
-
-export type WriteBlockVariable<Value> = {
-  readonly size: (value: Value) => number;
-  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
-};
-
-export type WriteBlock<Value> =
-  | WriteBlockFixed<Value>
-  | WriteBlockVariable<Value>;
 
 export const ReadBlock = (() => {
   const tmpbuf = new ArrayBuffer(8);
@@ -694,6 +736,18 @@ export const WriteBlock = (() => {
     resolveSize,
   };
 })();
+
+export const Block = {
+  uint8: { read: ReadBlock.uint8, write: WriteBlock.uint8 },
+  uint16: { read: ReadBlock.uint16, write: WriteBlock.uint16 },
+  uint32: { read: ReadBlock.uint32, write: WriteBlock.uint32 },
+  float64: { read: ReadBlock.float64, write: WriteBlock.float64 },
+  encodedUint: { read: ReadBlock.encodedUint, write: WriteBlock.encodedUint },
+  encodedString: {
+    read: ReadBlock.encodedString,
+    write: WriteBlock.encodedString,
+  },
+} as const;
 
 export function calcStringSize(str: string): number {
   let bytes = 0;
