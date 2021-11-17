@@ -2,38 +2,39 @@
 import { DirtyManager } from "./DirtyManager.ts";
 import { IBlockFixed } from "./types.d.ts";
 
-export type BlockNamed<N extends string, Value> = {
+export type IBlockNamed<N extends string, Value> = {
   name: N;
   block: IBlockFixed<Value>;
 };
 
-export type BlockNamedAny = BlockNamed<string, any>;
+export type IBlockNamedAny = IBlockNamed<string, any>;
 
-export type BlocksFixedAny = ReadonlyArray<BlockNamedAny>;
+export type IBlocksFixedAny = ReadonlyArray<IBlockNamedAny>;
 
-export type BlockNames<Schema extends BlocksFixedAny> = Schema[number]["name"];
+export type IBlockNames<Schema extends IBlocksFixedAny> =
+  Schema[number]["name"];
 
-export type BlockValueByName<
-  Schema extends BlocksFixedAny,
+export type IBlockValueByName<
+  Schema extends IBlocksFixedAny,
   Name extends Schema[number]["name"],
-> = Extract<Schema[number], { name: Name }> extends BlockNamed<string, infer V>
+> = Extract<Schema[number], { name: Name }> extends IBlockNamed<string, infer V>
   ? V
   : never;
 
-export type FixedBlockListItem = { offset: number; block: IBlockFixed<any> };
+export type IFixedBlockListItem = { offset: number; block: IBlockFixed<any> };
 
-export class FixedBlockList<FixedBlocks extends BlocksFixedAny> {
+export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
   public static named<N extends string, Value>(
     name: N,
     block: IBlockFixed<Value>,
-  ): BlockNamed<N, Value> {
+  ): IBlockNamed<N, Value> {
     return { name, block };
   }
 
   public readonly schema: FixedBlocks;
 
   private readonly buffer: Uint8Array;
-  private readonly byName = new Map<string, FixedBlockListItem>();
+  private readonly byName = new Map<string, IFixedBlockListItem>();
   private readonly lastOffset: number;
 
   private readonly dirtyManager: DirtyManager;
@@ -80,9 +81,9 @@ export class FixedBlockList<FixedBlocks extends BlocksFixedAny> {
     this.dirtyManager.markClean();
   }
 
-  public read<N extends BlockNames<FixedBlocks>>(
+  public read<N extends IBlockNames<FixedBlocks>>(
     name: N,
-  ): BlockValueByName<FixedBlocks, N> {
+  ): IBlockValueByName<FixedBlocks, N> {
     const obj = this.byName.get(name);
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
@@ -91,9 +92,9 @@ export class FixedBlockList<FixedBlocks extends BlocksFixedAny> {
     return value;
   }
 
-  public write<N extends BlockNames<FixedBlocks>>(
+  public write<N extends IBlockNames<FixedBlocks>>(
     name: N,
-    value: BlockValueByName<FixedBlocks, N>,
+    value: IBlockValueByName<FixedBlocks, N>,
   ): this {
     const obj = this.byName.get(name);
     if (!obj) {
@@ -119,7 +120,7 @@ export class FixedBlockList<FixedBlocks extends BlocksFixedAny> {
     return this;
   }
 
-  public restAsFixedBlockList<FixedBlocks extends BlocksFixedAny>(
+  public restAsFixedBlockList<FixedBlocks extends IBlocksFixedAny>(
     blocks: FixedBlocks,
   ): FixedBlockList<FixedBlocks> {
     return new FixedBlockList(this.readRest(), blocks, this.dirtyManager);

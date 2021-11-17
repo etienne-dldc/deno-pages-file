@@ -15,12 +15,12 @@ export { DirtyManager } from "./DirtyManager.ts";
 export { BlockSeq } from "./BlockSeq.ts";
 export { FixedBlockList } from "./FixedBlockList.ts";
 export type {
-  BlockNamed,
-  BlockNamedAny,
-  BlockNames,
-  BlocksFixedAny,
-  BlockValueByName,
-  FixedBlockListItem,
+  IBlockNamed,
+  IBlockNamedAny,
+  IBlockNames,
+  IBlocksFixedAny,
+  IBlockValueByName,
+  IFixedBlockListItem,
 } from "./FixedBlockList.ts";
 export { calcStringSize } from "./utils.ts";
 export { BinvalReadBlock, BinvalWriteBlock } from "./Binval.ts";

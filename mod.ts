@@ -1,4 +1,30 @@
 export { PagedFile } from "./src/PagedFile.ts";
 export type { PagedFileOptions } from "./src/PagedFile.ts";
 export { EntryPage, PageType, RootPage } from "./src/Page.ts";
-export type {} from "./src/buffer/mod.ts";
+export {
+  BinvalReadBlock,
+  BinvalWriteBlock,
+  Block,
+  BlockSeq,
+  calcStringSize,
+  DirtyManager,
+  FixedBlockList,
+  ReadBlock,
+  WriteBlock,
+} from "./src/buffer/mod.ts";
+export type {
+  IBlock,
+  IBlockFixed,
+  IBlockNamed,
+  IBlockNamedAny,
+  IBlockNames,
+  IBlocksFixedAny,
+  IBlockValueByName,
+  IFixedBlockListItem,
+  IReadBlock,
+  IReadBlockFixed,
+  IReadBlockVariable,
+  IWriteBlock,
+  IWriteBlockFixed,
+  IWriteBlockVariable,
+} from "./src/buffer/mod.ts";

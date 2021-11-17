@@ -1,8 +1,8 @@
 import {
   Block,
-  BlocksFixedAny,
   DirtyManager,
   FixedBlockList,
+  IBlocksFixedAny,
   ReadBlock,
   WriteBlock,
 } from "./buffer/mod.ts";
@@ -15,9 +15,9 @@ export enum PageType {
   Entry = 4,
 }
 
-export type PageAny = Page<BlocksFixedAny>;
+export type PageAny = Page<IBlocksFixedAny>;
 
-export class Page<HeaderBlocks extends BlocksFixedAny> {
+export class Page<HeaderBlocks extends IBlocksFixedAny> {
   public readonly type: PageType | number;
   public readonly pageSize: number;
   public readonly addr: number;
