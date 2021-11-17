@@ -1,11 +1,11 @@
-import { Block } from "./BufferBlock.ts";
 import {
+  Block,
   BlocksFixedAny,
+  DirtyManager,
   FixedBlockList,
   ReadBlock,
   WriteBlock,
-} from "./BufferBlock.ts";
-import { DirtyManager } from "./DirtyManager.ts";
+} from "./buffer/mod.ts";
 
 export enum PageType {
   Empty = 0,

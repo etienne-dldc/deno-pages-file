@@ -1,11 +1,8 @@
 // deno-lint-ignore-file no-explicit-any
-import {
-  calcStringSize,
-  ReadBlock,
-  ReadBlock as R,
-  WriteBlock,
-  WriteBlock as W,
-} from "./BufferBlock.ts";
+import { ReadBlock as R } from "./ReadBlock.ts";
+import { IReadBlock, IWriteBlock } from "./types.d.ts";
+import { calcStringSize } from "./utils.ts";
+import { WriteBlock as W } from "./WriteBlock.ts";
 
 const enum Type {
   Null = 0,
@@ -33,7 +30,7 @@ const enum Type {
 }
 
 export const BinvalReadBlock = (() => {
-  const decodeMap: Array<ReadBlock<any> | null> = [];
+  const decodeMap: Array<IReadBlock<any> | null> = [];
 
   decodeMap[Type.Null] = R.transform(R.uint8, () => null);
   decodeMap[Type.Undefined] = R.transform(R.uint8, () => undefined);
@@ -143,7 +140,7 @@ export const BinvalReadBlock = (() => {
     decodeMap[Type.Number0 + (i - 128)] = smallPositiveNumber;
   }
 
-  const value: ReadBlock<any> = R.dynamic((buf, pos) => {
+  const value: IReadBlock<any> = R.dynamic((buf, pos) => {
     const type = R.uint8.read(buf, pos);
     const block = decodeMap[type];
     if (!block) {
@@ -158,7 +155,7 @@ export const BinvalReadBlock = (() => {
 })();
 
 export const BinvalWriteBlock = (() => {
-  const value: WriteBlock<any> = W.dynamic((val: any): WriteBlock<any> => {
+  const value: IWriteBlock<any> = W.dynamic((val: any): IWriteBlock<any> => {
     if (val === null) {
       return W.inject(W.uint8, Type.Null);
     }
@@ -189,7 +186,7 @@ export const BinvalWriteBlock = (() => {
     throw new Error("Unsupported value " + val);
   });
 
-  const integer = ((): WriteBlock<number> => {
+  const integer = ((): IWriteBlock<number> => {
     return W.dynamic((val: number) => {
       if (val >= -7 && val <= 127) {
         if (val > 0) {
@@ -256,7 +253,7 @@ export const BinvalWriteBlock = (() => {
     (val) => [Type.String, val],
   );
 
-  const string = ((): WriteBlock<string> => {
+  const string = ((): IWriteBlock<string> => {
     return W.dynamic((val: string) => {
       const len = calcStringSize(val);
       return len <= 32 ? smallString : bigString;

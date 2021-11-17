@@ -6,7 +6,7 @@ const path = resolve(Deno.cwd(), "example", "file.db");
 const file = new PagedFile(path, { pageSize: 256 });
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+// const decoder = new TextDecoder();
 
 // file.readRootPage();
 
