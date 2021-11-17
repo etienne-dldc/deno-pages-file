@@ -8,8 +8,84 @@ export enum PageType {
   Entry = 4,
 }
 
-// type | nextPage | header | content
 export class Page {
+  public readonly type: PageType | number;
+  public readonly pageSize: number;
+  public readonly addr: number;
+  public readonly contentLenth: number;
+  public readonly contentOffset: number;
+
+  protected readonly buffer: PageBuffer;
+
+  protected isDirty: boolean;
+  protected isDeleted = false;
+
+  constructor(
+    pageSize: number,
+    addr: number,
+    buffer: Uint8Array,
+    type: PageType | number,
+    isDirty: boolean
+  ) {
+    this.addr = addr;
+    this.pageSize = pageSize;
+    this.type = type;
+    this.isDirty = isDirty;
+    // start at pos 1 to skip type
+    this.buffer = new PageBuffer(buffer, 1, () => {
+      if (this.isDeleted) {
+        throw new Error("Cannot write on deleted page");
+      }
+      this.isDirty = true;
+    });
+    this.contentOffset = this.buffer.position;
+    this.contentLenth = this.pageSize - this.contentOffset;
+  }
+
+  public get dirty(): boolean {
+    return this.isDirty;
+  }
+
+  public markDeleted() {
+    if (this.isDeleted) {
+      return;
+    }
+    this.isDeleted = true;
+  }
+
+  // return a new buffer with the content
+  public getContent(): PageBuffer {
+    return this.buffer
+      .seek(this.contentOffset)
+      .read.pageBuffer(this.contentLenth);
+  }
+
+  public setContent(content: Uint8Array): void {
+    if (content.byteLength > this.contentLenth) {
+      throw new Error(`Payload too large`);
+    }
+    return this.buffer.seek(this.contentOffset).write.buffer(content);
+  }
+
+  public writeTo(file: Deno.File) {
+    if (this.isDirty === false) {
+      return;
+    }
+    const offset = this.pageSize * this.addr;
+    file.seekSync(offset, Deno.SeekMode.Start);
+    for (let i = 0; i < this.pageSize; ) {
+      const nwrite = file.writeSync(this.buffer.subarray(i));
+      if (nwrite <= 0) {
+        throw new Error("Unexpected return value of write(): " + nwrite);
+      }
+      i += nwrite;
+    }
+    this.isDirty = false;
+  }
+}
+
+// type | nextPage | header | content
+export class OldPage {
   public readonly addr: number;
   public readonly contentLenth: number;
   public readonly contentOffset: number;

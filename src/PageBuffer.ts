@@ -11,116 +11,39 @@ const tmpbuf = new ArrayBuffer(8);
 const f64arr = new Float64Array(tmpbuf);
 const u8arr = new Uint8Array(tmpbuf);
 
+type BeforeWriting = (pos: number, len: number) => void;
+
 export class PageBuffer {
   protected buffer: Uint8Array;
-  protected _position = 0;
-  protected onBeforeWriting?: ((size: number) => void) | undefined;
+  protected beforeWriting?: BeforeWriting;
 
-  public read: PageBufferRead;
-  public readNext: PageBufferRead;
-  public write: PageBufferWrite;
-  public writeNext: PageBufferWrite;
-
-  constructor(
-    buffer: Uint8Array,
-    pos = 0,
-    onBeforeWriting?: (size: number) => void
-  ) {
+  constructor(buffer: Uint8Array, beforeWriting?: BeforeWriting) {
     this.buffer = buffer;
-    this._position = pos;
-    this.onBeforeWriting = onBeforeWriting;
-    const setPos = (v: number) => {
-      this._position = v;
-    };
-    // deno-lint-ignore no-this-alias
-    const parent = this;
-    const ref: PageBufferRef = {
-      buffer: this.buffer,
-      beforeWriting: this.beforeWriting,
-      onBeforeWriting,
-      get pos() {
-        return parent._position;
-      },
-      set pos(p: number) {
-        setPos(p);
-      },
-    };
-    this.read = new PageBufferRead(ref, false);
-    this.readNext = new PageBufferRead(ref, true);
-    this.write = new PageBufferWrite(ref, false);
-    this.writeNext = new PageBufferWrite(ref, true);
-  }
-
-  public seek(position: number): this {
-    this._position = position;
-    return this;
-  }
-
-  public reset(): this {
-    this.seek(0);
-    return this;
-  }
-
-  public subarray(begin?: number, end?: number) {
-    return this.buffer.subarray(begin, end);
-  }
-
-  public withOffset(begin: number = this._position) {
-    return new PageBuffer(
-      this.subarray(begin),
-      Math.max(0, this._position - begin),
-      this.onBeforeWriting
-    );
-  }
-
-  public mergeWith(other: PageBuffer): PageBuffer {
-    const size = this.byteLength + other.byteLength;
-    const resultArr = new Uint8Array(size);
-    resultArr.set(this.buffer);
-    resultArr.set(other.reset().read.buffer(other.byteLength), this.byteLength);
-    return new PageBuffer(resultArr);
+    this.beforeWriting = beforeWriting;
   }
 
   public get byteLength() {
     return this.buffer.byteLength;
   }
 
-  public get position() {
-    return this._position;
+  public createCursor(pos = 0): PageBufferCursor {
+    return new PageBufferCursor(this.buffer, pos);
   }
 
-  public beforeWriting(size: number) {
-    if (this.onBeforeWriting) {
-      this.onBeforeWriting(size);
-    }
+  public subarray(begin?: number, end?: number) {
+    return this.buffer.subarray(begin, end);
+  }
+
+  public mergeWith(other: PageBuffer): PageBuffer {
+    const size = this.byteLength + other.byteLength;
+    const resultArr = new Uint8Array(size);
+    resultArr.set(this.buffer);
+    resultArr.set(other.subarray(), this.byteLength);
+    return new PageBuffer(resultArr);
   }
 
   static calcStringSize(str: string) {
-    let bytes = 0;
-    const len = str.length;
-    for (let i = 0; i < len; i++) {
-      const codePoint = str.charCodeAt(i);
-      if (codePoint < 0x80) {
-        bytes += 1;
-      } else if (codePoint < 0x800) {
-        bytes += 2;
-      } else if (codePoint >= 0xd800 && codePoint < 0xe000) {
-        if (codePoint < 0xdc00 && i + 1 < len) {
-          const next = str.charCodeAt(i + 1);
-          if (next >= 0xdc00 && next < 0xe000) {
-            bytes += 4;
-            i++;
-          } else {
-            bytes += 3;
-          }
-        } else {
-          bytes += 3;
-        }
-      } else {
-        bytes += 3;
-      }
-    }
-    return bytes;
+    return calcStringSize(str);
   }
 
   static calcLenEncodedStringSize(str: string) {
@@ -138,92 +61,160 @@ export class PageBuffer {
 }
 
 export class DynamicPageBuffer extends PageBuffer {
-  constructor(initSize = 32) {
-    super(new Uint8Array(initSize));
-  }
-  beforeWriting(size: number) {
-    super.beforeWriting(size);
-    const minsize = this._position + size;
-    if (minsize > this.buffer.byteLength) {
-      let newsize = this.buffer.byteLength * 4;
-      while (minsize > newsize) {
-        newsize *= 4;
+  constructor(initSize = 32, beforeWriting?: BeforeWriting) {
+    super(new Uint8Array(initSize), (pos, len) => {
+      const minsize = pos + len;
+      if (minsize > this.buffer.byteLength) {
+        let newsize = this.buffer.byteLength * 4;
+        while (minsize > newsize) {
+          newsize *= 4;
+        }
+        const newBuffer = new Uint8Array(newsize);
+        newBuffer.set(this.buffer);
+        this.buffer = newBuffer;
       }
-      const newBuffer = new Uint8Array(newsize);
-      newBuffer.set(this.buffer);
-      this.buffer = newBuffer;
+      if (beforeWriting) {
+        beforeWriting(pos, len);
+      }
+    });
+  }
+}
+
+class PageBufferCursor {
+  private buffer: Uint8Array;
+  private positionInternal = 0;
+
+  public read: PageBufferRead;
+  public write: PageBufferWrite;
+
+  constructor(
+    buffer: Uint8Array,
+    position: number = 0,
+    beforeWriting?: BeforeWriting
+  ) {
+    this.buffer = buffer;
+    // deno-lint-ignore no-this-alias
+    const parent = this;
+    const ref: PageBufferRef = {
+      buffer: this.buffer,
+      beforeWriting: (len) => {
+        if (beforeWriting) {
+          beforeWriting(this.positionInternal, len);
+        }
+        // make sure there are enough place
+        if (this.positionInternal + len > this.byteLength) {
+          throw new Error(`PageBuffer overflow`);
+        }
+      },
+      get pos() {
+        return parent.positionInternal;
+      },
+      set pos(p: number) {
+        parent.seek(p);
+      },
+    };
+    this.read = new PageBufferRead(ref, true);
+    this.write = new PageBufferWrite(ref, true);
+    this.seek(position);
+  }
+
+  public get byteLength() {
+    return this.buffer.byteLength;
+  }
+
+  public get position() {
+    return this.positionInternal;
+  }
+
+  public get rest() {
+    return this.byteLength - this.positionInternal;
+  }
+
+  public seek(pos: number): this {
+    if (pos < 0 || pos > this.byteLength) {
+      throw new Error(`Out of range seek`);
     }
+    return this;
+  }
+
+  public seekStart(): this {
+    this.seek(0);
+    return this;
+  }
+
+  public skip(len: number): this {
+    this.seek(this.position + len);
+    return this;
   }
 }
 
 type PageBufferRef = {
   buffer: Uint8Array;
   pos: number;
-  beforeWriting(len: number): void;
-  onBeforeWriting?: (size: number) => void;
+  beforeWriting: (len: number) => void;
 };
 
 class PageBufferWrite {
-  private bufferPage: PageBufferRef;
+  private parent: PageBufferRef;
   private isNext: boolean;
 
   constructor(parent: PageBufferRef, isNext: boolean) {
-    this.bufferPage = parent;
+    this.parent = parent;
     this.isNext = isNext;
   }
 
   float64(num: number) {
-    this.bufferPage.beforeWriting(8);
+    this.parent.beforeWriting(8);
     f64arr[0] = num;
     this.buffer(u8arr);
   }
 
   uint32(num: number) {
-    this.bufferPage.beforeWriting(4);
-    this.bufferPage.buffer[this.bufferPage.pos] = (num >>> 24) & 0xff;
-    this.bufferPage.buffer[this.bufferPage.pos + 1] = (num >>> 16) & 0xff;
-    this.bufferPage.buffer[this.bufferPage.pos + 2] = (num >>> 8) & 0xff;
-    this.bufferPage.buffer[this.bufferPage.pos + 3] = num & 0xff;
+    this.parent.beforeWriting(4);
+    this.parent.buffer[this.parent.pos] = (num >>> 24) & 0xff;
+    this.parent.buffer[this.parent.pos + 1] = (num >>> 16) & 0xff;
+    this.parent.buffer[this.parent.pos + 2] = (num >>> 8) & 0xff;
+    this.parent.buffer[this.parent.pos + 3] = num & 0xff;
     if (this.isNext) {
-      this.bufferPage.pos += 4;
+      this.parent.pos += 4;
     }
   }
 
   uint16(num: number) {
-    this.bufferPage.beforeWriting(2);
-    this.bufferPage.buffer[this.bufferPage.pos] = (num >> 8) & 0xff;
-    this.bufferPage.buffer[this.bufferPage.pos + 1] = num & 0xff;
+    this.parent.beforeWriting(2);
+    this.parent.buffer[this.parent.pos] = (num >> 8) & 0xff;
+    this.parent.buffer[this.parent.pos + 1] = num & 0xff;
     if (this.isNext) {
-      this.bufferPage.pos += 2;
+      this.parent.pos += 2;
     }
   }
 
   uint8(num: number) {
-    this.bufferPage.beforeWriting(1);
-    this.bufferPage.buffer[this.bufferPage.pos] = num & 0xff;
+    this.parent.beforeWriting(1);
+    this.parent.buffer[this.parent.pos] = num & 0xff;
     if (this.isNext) {
-      this.bufferPage.pos += 1;
+      this.parent.pos += 1;
     }
   }
 
   buffer(buf: Uint8Array) {
-    this.bufferPage.beforeWriting(buf.byteLength);
-    this.bufferPage.buffer.set(buf, this.bufferPage.pos);
+    this.parent.beforeWriting(buf.byteLength);
+    this.parent.buffer.set(buf, this.parent.pos);
     if (this.isNext) {
-      this.bufferPage.pos += buf.byteLength;
+      this.parent.pos += buf.byteLength;
     }
   }
 
   string(str: string) {
     const len = PageBuffer.calcStringSize(str);
     this.encodedUint(len);
-    this.bufferPage.beforeWriting(len);
+    this.parent.beforeWriting(len);
     const r = encoder.encodeInto(
       str,
-      this.bufferPage.buffer.subarray(this.bufferPage.pos)
+      this.parent.buffer.subarray(this.parent.pos)
     );
     if (this.isNext) {
-      this.bufferPage.pos += r.written;
+      this.parent.pos += r.written;
     }
   }
 
@@ -322,10 +313,6 @@ class PageBufferRead {
     return buf;
   }
 
-  pageBuffer(len: number) {
-    return new PageBuffer(this.buffer(len), 0, this.parent.onBeforeWriting);
-  }
-
   encodedUint() {
     const val = this.uint8();
     if (val < 254) {
@@ -347,4 +334,32 @@ class PageBufferRead {
     }
     return str;
   }
+}
+
+function calcStringSize(str: string): number {
+  let bytes = 0;
+  const len = str.length;
+  for (let i = 0; i < len; i++) {
+    const codePoint = str.charCodeAt(i);
+    if (codePoint < 0x80) {
+      bytes += 1;
+    } else if (codePoint < 0x800) {
+      bytes += 2;
+    } else if (codePoint >= 0xd800 && codePoint < 0xe000) {
+      if (codePoint < 0xdc00 && i + 1 < len) {
+        const next = str.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next < 0xe000) {
+          bytes += 4;
+          i++;
+        } else {
+          bytes += 3;
+        }
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
