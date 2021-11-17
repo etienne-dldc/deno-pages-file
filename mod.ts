@@ -1,3 +1,3 @@
 export { PagedFile } from "./src/PagedFile.ts";
 export type { PagedFileOptions } from "./src/PagedFile.ts";
-export type { EntryPage, RootPage } from "./src/Page.ts";
+export { EntryPage, RootPage } from "./src/Page.ts";
