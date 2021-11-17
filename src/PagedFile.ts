@@ -1,13 +1,13 @@
 import { LeastRecentlyUsedMap } from "./LeastRecentlyUsedMap.ts";
 import {
-  DataPage,
-  EmptylistPage,
-  EmptyPage,
-  EntryPage,
-  PageAny,
+  InternalDataPage,
+  InternalEmptylistPage,
+  InternalEmptyPage,
+  InternalEntryPage,
+  InternalPageAny,
+  InternalRootPage,
   PageType,
-  RootPage,
-} from "./Page.ts";
+} from "./InternalPage.ts";
 
 const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
@@ -19,19 +19,19 @@ export type InstantiatePage = (
   buffer: Uint8Array,
   type: number,
   isNew: boolean,
-) => EntryPage;
+) => InternalEntryPage;
 
 export type InstantiateRootPage = (
   pageSize: number,
   buffer: Uint8Array,
   isNew: boolean,
-) => RootPage;
+) => InternalRootPage;
 
 export type PagedFileOptions = {
   pageSize?: number;
   cacheSize?: number;
-  instantiatePage?: InstantiatePage;
-  instantiateRootPage?: InstantiateRootPage;
+  create?: boolean;
+  // instantiateRootPage?: InstantiateRootPage;
 };
 
 export class PagedFile {
@@ -40,33 +40,32 @@ export class PagedFile {
   public readonly cacheSize: number;
 
   private readonly file: Deno.File;
-  private readonly cache = new LeastRecentlyUsedMap<number, PageAny>();
+  private readonly cache = new LeastRecentlyUsedMap<number, InternalPageAny>();
 
   private isClosed = false;
   private filePageCount: number; // Number of pages in the document (written on file)
   private memoryPageCount: number; // Number of pages in the document (in cache)
-  private instantiateEntryPage?: InstantiatePage;
-  private instantiateRootPage?: InstantiateRootPage;
+  // private instantiateEntryPage?: InstantiatePage;
+  // private instantiateRootPage?: InstantiateRootPage;
 
   constructor(
     path: string,
     {
       pageSize = 4096,
       cacheSize = Math.round((8 * 1024 * 1024) / pageSize),
-      instantiatePage,
+      create = true,
     }: PagedFileOptions = {},
   ) {
     if (VALID_PAGE_SIZE.includes(pageSize) === false) {
       throw new Error(`Invalid pageSize.`);
     }
-    this.instantiateEntryPage = instantiatePage;
     this.pageSize = pageSize;
     this.cacheSize = cacheSize;
     this.path = path;
     this.file = Deno.openSync(this.path, {
       read: true,
       write: true,
-      create: true,
+      create: create,
     });
     const stat = this.file.statSync();
     const pageCount = stat.size / this.pageSize;
@@ -78,33 +77,35 @@ export class PagedFile {
     this.memoryPageCount = pageCount === 0 ? 1 : pageCount;
   }
 
-  public readRootPage(): Uint8Array {
+  public readRootPage(start?: number, length?: number): Uint8Array {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    const page = this.getRootPage();
-    const result = this.readPageContent(page);
+    const page = this.getInternalRootPage();
+    const result = this.readLinkedPageContent(page, start, length);
     this.checkCache();
     return result;
   }
 
-  public writeRootPage(content: Uint8Array): void {
+  public writeRootPage(content: Uint8Array, start?: number): void {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
-    const page = this.getRootPage();
-    this.writePageContent(page, content);
+    const page = this.getInternalRootPage();
+    this.writeLinkedPageContent(page, content, start);
   }
 
   public readPage(
     addr: number,
     expectedType: number = PageType.Entry,
+    start?: number,
+    length?: number,
   ): Uint8Array {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    const page = this.getEntryPage(addr, expectedType, true);
-    const result = this.readPageContent(page);
+    const page = this.getInternalEntryPage(addr, expectedType, true);
+    const result = this.readLinkedPageContent(page, start, length);
     this.checkCache();
     return result;
   }
@@ -113,19 +114,24 @@ export class PagedFile {
     addr: number,
     content: Uint8Array,
     expectedType: number = PageType.Entry,
+    start?: number,
   ): void {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
-    const page = this.getEntryPage(addr, expectedType, true);
-    this.writePageContent(page, content);
+    const page = this.getInternalEntryPage(addr, expectedType, true);
+    this.writeLinkedPageContent(page, content, start);
   }
 
   public createPage(pageType: number = PageType.Entry): number {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
-    const page = this.getEntryPage(this.getEmptyPageAddr(), pageType, false);
+    const page = this.getInternalEntryPage(
+      this.getEmptyPageAddr(),
+      pageType,
+      false,
+    );
     return page.addr;
   }
 
@@ -133,7 +139,7 @@ export class PagedFile {
     if (addr === 0) {
       return;
     }
-    const page = this.getEntryPage(addr, pageType, true);
+    const page = this.getInternalEntryPage(addr, pageType, true);
     this.emptyPage(page);
     this.addAddrToEmptylist(page.addr);
     this.deleteDataPage(page.nextPage);
@@ -178,21 +184,104 @@ export class PagedFile {
     });
   }
 
-  private writePageContent(page: RootPage | EntryPage, content: Uint8Array) {
-    if (content.byteLength <= page.contentLength) {
-      page.writeContent(content);
-      this.deleteDataPage(page.nextPage);
-      page.nextPage = 0;
-    } else {
-      page.writeContent(content.subarray(0, page.contentLength));
-      const currentNextAddress = page.nextPage;
-      const nextAddr = this.writeToDataPage(
-        currentNextAddress,
-        page.addr,
-        content.subarray(page.contentLength),
+  private writeLinkedPageContent(
+    page: InternalRootPage | InternalEntryPage,
+    content: Uint8Array,
+    start?: number,
+    clearAfter?: boolean,
+  ) {
+    const startOffset = start ?? 0;
+    return this.writeLinkedPageContentInternal(page, {
+      type: "offset",
+      offset: startOffset,
+      content,
+    }, clearAfter ?? false);
+  }
+
+  private writeLinkedPageContentInternal(
+    page: InternalRootPage | InternalEntryPage | InternalDataPage,
+    current: { type: "offset"; offset: number; content: Uint8Array } | {
+      type: "write";
+      content: Uint8Array;
+    },
+    clearAfter: boolean,
+  ): void {
+    const pageLength = page.contentLength;
+    if (current.type === "offset") {
+      if (current.offset >= pageLength) {
+        // skip current page
+        const nextPage = this.writeLinkedPageContentInternalByAddr(
+          page.nextPage,
+          {
+            type: "offset",
+            offset: current.offset - pageLength,
+            content: current.content,
+          },
+          clearAfter,
+        );
+        page.nextPage = nextPage;
+        return;
+      }
+      // write current page
+      const startOffset = current.offset;
+      const endOffset = startOffset + current.content.byteLength;
+      if (endOffset <= pageLength) {
+        // everything is in page
+        page.writeContent(current.content, startOffset);
+        if (clearAfter) {
+          this.deleteDataPage(page.nextPage);
+        }
+        return;
+      }
+      // write multiple pages
+      page.writeContent(current.content.subarray(0, pageLength));
+      const nextPage = this.writeLinkedPageContentInternalByAddr(
+        page.nextPage,
+        {
+          type: "write",
+          content: current.content.subarray(pageLength),
+        },
+        clearAfter,
       );
-      page.nextPage = nextAddr;
+      page.nextPage = nextPage;
+      return;
     }
+    // writing
+    if (current.content.byteLength <= pageLength) {
+      page.writeContent(current.content);
+      if (clearAfter) {
+        this.deleteDataPage(page.nextPage);
+      }
+      return;
+    }
+    // write multiple pages
+    page.writeContent(current.content.subarray(0, pageLength));
+    const nextPage = this.writeLinkedPageContentInternalByAddr(page.nextPage, {
+      type: "write",
+      content: current.content.subarray(pageLength),
+    }, clearAfter);
+    page.nextPage = nextPage;
+    return;
+  }
+
+  private writeLinkedPageContentInternalByAddr(
+    pageAddr: number,
+    current: { type: "offset"; offset: number; content: Uint8Array } | {
+      type: "write";
+      content: Uint8Array;
+    },
+    clearAfter: boolean,
+  ): number {
+    if (pageAddr === 0) {
+      return this.writeLinkedPageContentInternalByAddr(
+        this.getEmptyPageAddr(),
+        current,
+        clearAfter,
+      );
+    }
+    const page = this.getInternalDataPage(pageAddr, false);
+    this.writeLinkedPageContentInternal(page, current, clearAfter);
+    return page.addr;
   }
 
   private writeToDataPage(
@@ -203,7 +292,7 @@ export class PagedFile {
     const resolvedPageAddr = pageAddr === 0
       ? this.getEmptyPageAddr()
       : pageAddr;
-    const page = this.getDataPage(resolvedPageAddr, false);
+    const page = this.getInternalDataPage(resolvedPageAddr, false);
     page.prevPage = prevAddr;
     if (content.byteLength <= page.contentLength) {
       page.writeContent(content);
@@ -221,14 +310,106 @@ export class PagedFile {
     return resolvedPageAddr;
   }
 
-  private readPageContent(page: RootPage | EntryPage): Uint8Array {
-    if (page.nextPage === 0) {
-      const content = page.readContent();
-      const copy = new Uint8Array(content.byteLength);
-      copy.set(content);
-      return copy;
+  private readLinkedPageContent(
+    page: InternalRootPage | InternalEntryPage,
+    start?: number,
+    length?: number,
+  ): Uint8Array {
+    const startOffset = start ?? 0;
+    return this.readLinkedPageContentInternal(page, {
+      type: "offset",
+      offset: startOffset,
+    }, length);
+  }
+
+  private readLinkedPageContentInternal(
+    page: InternalRootPage | InternalEntryPage | InternalDataPage,
+    current: { type: "offset"; offset: number } | {
+      type: "read";
+      content: Uint8Array;
+    },
+    length?: number,
+  ): Uint8Array {
+    const pageLength = page.contentLength;
+    if (current.type === "offset") {
+      if (current.offset >= pageLength) {
+        // skip current page
+        return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+          type: "offset",
+          offset: current.offset - pageLength,
+        }, length);
+      }
+      // read current page
+      const startOffset = current.offset;
+      if (length === undefined) {
+        // read full page
+        const pageContent = page.readContent(startOffset);
+        if (page.nextPage === 0) {
+          // we are done
+          return pageContent;
+        }
+        // read next page
+        return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+          type: "read",
+          content: pageContent,
+        }, length);
+      }
+      const endOffset = startOffset + length;
+      if (endOffset <= pageLength) {
+        // everything is in page
+        return page.readContent(startOffset, endOffset);
+      }
+      // must read multiple pages
+      if (page.nextPage === 0) {
+        throw new Error(`Out of range read`);
+      }
+      const pageContent = page.readContent(startOffset);
+      return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+        type: "read",
+        content: pageContent,
+      }, length);
     }
-    return this.readDataPage(page.readContent(), page.nextPage);
+    // reading
+    if (length === undefined) {
+      // no length read everything
+      const content = this.mergeBuffers(current.content, page.readContent());
+      if (page.nextPage === 0) {
+        // we are done
+        return content;
+      }
+      // read next page
+      return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+        type: "read",
+        content,
+      }, length);
+    }
+    const rest = length - current.content.byteLength;
+    if (rest <= pageLength) {
+      return this.mergeBuffers(current.content, page.readContent(0, rest));
+    }
+    if (page.nextPage === 0) {
+      throw new Error(`Out of range read`);
+    }
+    const content = this.mergeBuffers(current.content, page.readContent());
+    return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+      type: "read",
+      content,
+    }, length);
+  }
+
+  private readLinkedPageContentInternalByAddr(
+    pageAddr: number,
+    current: { type: "offset"; offset: number } | {
+      type: "read";
+      content: Uint8Array;
+    },
+    length?: number,
+  ): Uint8Array {
+    if (pageAddr === 0) {
+      throw new Error(`Out of range read`);
+    }
+    const page = this.getInternalDataPage(pageAddr, true);
+    return this.readLinkedPageContentInternal(page, current, length);
   }
 
   private mergeBuffers(left: Uint8Array, right: Uint8Array): Uint8Array {
@@ -239,23 +420,17 @@ export class PagedFile {
     return resultArr;
   }
 
-  private readDataPage(content: Uint8Array, pageAddr: number): Uint8Array {
-    const page = this.getDataPage(pageAddr, true);
-    const expendedContent = this.mergeBuffers(content, page.readContent());
-    if (page.nextPage === 0) {
-      return expendedContent;
-    }
-    return this.readDataPage(expendedContent, page.nextPage);
-  }
-
-  private getLastEmptylistPage(): EmptylistPage | null {
-    const root = this.getRootPage();
+  private getLastEmptylistPage(): InternalEmptylistPage | null {
+    const root = this.getInternalRootPage();
     if (root.emptylistAddr === 0) {
       return null;
     }
-    let emptylistPage = this.getEmptylistPage(root.emptylistAddr, true);
+    let emptylistPage = this.getInternalEmptylistPage(root.emptylistAddr, true);
     while (emptylistPage.nextPage !== 0) {
-      emptylistPage = this.getEmptylistPage(emptylistPage.nextPage, true);
+      emptylistPage = this.getInternalEmptylistPage(
+        emptylistPage.nextPage,
+        true,
+      );
     }
     return emptylistPage;
   }
@@ -273,12 +448,15 @@ export class PagedFile {
       this.emptyPage(emptylistPage);
       if (emptylistPage.prevPage === 0) {
         // prev is root
-        const root = this.getRootPage();
+        const root = this.getInternalRootPage();
         root.emptylistAddr = 0;
         return emptylistPage.addr;
       }
       // prev is another emptylist
-      const prevPage = this.getEmptylistPage(emptylistPage.prevPage, true);
+      const prevPage = this.getInternalEmptylistPage(
+        emptylistPage.prevPage,
+        true,
+      );
       prevPage.prevPage = 0;
       return emptylistPage.addr;
     }
@@ -289,89 +467,110 @@ export class PagedFile {
     if (addr === 0) {
       return;
     }
-    const page = this.getDataPage(addr, true);
+    const page = this.getInternalDataPage(addr, true);
     this.emptyPage(page);
     this.addAddrToEmptylist(page.addr);
     this.deleteDataPage(page.nextPage);
   }
 
-  private emptyPage(page: PageAny) {
+  private emptyPage(page: InternalPageAny) {
     page.markDeleted();
-    this.cache.set(page.addr, new EmptyPage(this.pageSize, page.addr));
+    this.cache.set(page.addr, new InternalEmptyPage(this.pageSize, page.addr));
   }
 
   private addAddrToEmptylist(addr: number) {
     const emptylist = this.getLastEmptylistPage();
     if (emptylist === null) {
       // create emptylist with the empty address
-      this.getEmptylistPage(addr, false);
-      const root = this.getRootPage();
+      this.getInternalEmptylistPage(addr, false);
+      const root = this.getInternalRootPage();
       root.emptylistAddr = addr;
       return;
     }
     if (emptylist.full) {
       // create next emptylist with the empty address
-      this.getEmptylistPage(addr, false);
+      this.getInternalEmptylistPage(addr, false);
       emptylist.nextPage = addr;
       return;
     }
     emptylist.push(addr);
   }
 
-  private ensurePageType(page: PageAny, type: PageType.Root): RootPage;
-  private ensurePageType(
-    page: PageAny,
+  private ensureInternalPageType(
+    page: InternalPageAny,
+    type: PageType.Root,
+  ): InternalRootPage;
+  private ensureInternalPageType(
+    page: InternalPageAny,
     type: PageType.Emptylist,
-  ): EmptylistPage;
-  private ensurePageType(page: PageAny, type: PageType.Data): DataPage;
-  private ensurePageType(page: PageAny, type: number): EntryPage;
-  private ensurePageType(page: PageAny, type: PageType): PageAny {
+  ): InternalEmptylistPage;
+  private ensureInternalPageType(
+    page: InternalPageAny,
+    type: PageType.Data,
+  ): InternalDataPage;
+  private ensureInternalPageType(
+    page: InternalPageAny,
+    type: number,
+  ): InternalEntryPage;
+  private ensureInternalPageType(
+    page: InternalPageAny,
+    type: PageType,
+  ): InternalPageAny {
     if (page.type !== type) {
       throw new Error(`Page type mismatch`);
     }
     return page;
   }
 
-  private getRootPage(): RootPage {
-    return this.ensurePageType(
-      this.getPage(0, PageType.Root, false),
+  private getInternalRootPage(): InternalRootPage {
+    return this.ensureInternalPageType(
+      this.getInternalPage(0, PageType.Root, false),
       PageType.Root,
     );
   }
 
-  private getEntryPage(
+  private getInternalEntryPage(
     addr: number,
     expectedType: number,
     mustExist: boolean,
-  ): EntryPage {
+  ): InternalEntryPage {
     if (expectedType <= PageType.Data) {
       throw new Error(`Invalid page type: Must be > ${PageType.Data}`);
     }
-    return this.ensurePageType(
-      this.getPage(addr, expectedType, mustExist),
+    return this.ensureInternalPageType(
+      this.getInternalPage(addr, expectedType, mustExist),
       expectedType,
-    ) as unknown as EntryPage;
+    ) as unknown as InternalEntryPage;
   }
 
-  private getDataPage(addr: number, mustExist: boolean): DataPage {
-    return this.ensurePageType(
-      this.getPage(addr, PageType.Data, mustExist),
+  private getInternalDataPage(
+    addr: number,
+    mustExist: boolean,
+  ): InternalDataPage {
+    if (addr === 0) {
+      throw new Error(`Cannot get null pointer Data page`);
+    }
+    return this.ensureInternalPageType(
+      this.getInternalPage(addr, PageType.Data, mustExist),
       PageType.Data,
     );
   }
 
-  private getEmptylistPage(addr: number, mustExist: boolean): EmptylistPage {
-    return this.ensurePageType(
-      this.getPage(addr, PageType.Emptylist, mustExist),
+  private getInternalEmptylistPage(
+    addr: number,
+    mustExist: boolean,
+  ): InternalEmptylistPage {
+    return this.ensureInternalPageType(
+      this.getInternalPage(addr, PageType.Emptylist, mustExist),
       PageType.Emptylist,
     );
   }
 
-  private getPage(
+  private getInternalPage(
     pageAddr: number,
     expectedType: number,
     mustExist: boolean,
-  ): PageAny {
+  ): InternalPageAny {
     const cached = this.cache.get(pageAddr);
     const isEmpty = Boolean(cached && cached.type !== PageType.Empty);
     if (cached) {
@@ -399,6 +598,27 @@ export class PagedFile {
     return page;
   }
 
+  private instantiatePage(
+    pageAddr: number,
+    buffer: Uint8Array,
+    isNew: boolean,
+  ): InternalPageAny {
+    const type: PageType = buffer[0];
+    if (type === PageType.Empty) {
+      throw new Error(`Cannot instantiate empty pagbe`);
+    }
+    if (type === PageType.Root) {
+      return new InternalRootPage(this.pageSize, buffer, isNew);
+    }
+    if (type === PageType.Emptylist) {
+      return new InternalEmptylistPage(this.pageSize, pageAddr, buffer, isNew);
+    }
+    if (type === PageType.Data) {
+      return new InternalDataPage(this.pageSize, pageAddr, buffer, isNew);
+    }
+    return new InternalEntryPage(this.pageSize, pageAddr, buffer, type, isNew);
+  }
+
   /**
    * Get buffer for the page, created it if outside the file size
    */
@@ -408,6 +628,7 @@ export class PagedFile {
     mustExist: boolean,
   ): [buffer: Uint8Array, isNew: boolean] {
     const isOnFile = pageAddr < this.filePageCount;
+    // sanity check
     if (pageAddr >= this.memoryPageCount) {
       throw new Error(`What ?`);
     }
@@ -435,39 +656,6 @@ export class PagedFile {
     return [buffer, true];
   }
 
-  private instantiatePage(
-    pageAddr: number,
-    buffer: Uint8Array,
-    isNew: boolean,
-  ): PageAny {
-    const type: PageType = buffer[0];
-    if (type === PageType.Empty) {
-      throw new Error(`Cannot instantiate empty pagbe`);
-    }
-    if (type === PageType.Root) {
-      if (this.instantiateRootPage) {
-        return this.instantiateRootPage(this.pageSize, buffer, isNew);
-      }
-      return new RootPage(this.pageSize, buffer, isNew);
-    }
-    if (type === PageType.Emptylist) {
-      return new EmptylistPage(this.pageSize, pageAddr, buffer, isNew);
-    }
-    if (type === PageType.Data) {
-      return new DataPage(this.pageSize, pageAddr, buffer, isNew);
-    }
-    if (this.instantiateEntryPage) {
-      return this.instantiateEntryPage(
-        this.pageSize,
-        pageAddr,
-        buffer,
-        type,
-        isNew,
-      );
-    }
-    return new EntryPage(this.pageSize, pageAddr, buffer, type, isNew);
-  }
-
   private readPageBuffer(pageAddr: number): Uint8Array {
     if (pageAddr < 0) {
       throw new Error(`Invalid page address`);
@@ -485,100 +673,90 @@ export class PagedFile {
     return buffer;
   }
 
-  protected isEmpty(addr: number) {
-    const cached = this.cache.get(addr);
-    if (cached) {
-      return cached.type === PageType.Empty;
-    }
-    const buffer = this.readPageBuffer(addr);
-    return buffer[0] === PageType.Empty;
-  }
-
-  protected printPage(page: PageAny): void {
-    if (page.type === PageType.Empty) {
-      console.info(`${("000" + page.addr).slice(-3)}: Empty`);
-      return;
-    }
-    if (page instanceof RootPage) {
-      console.info(
-        `${
-          ("000" + page.addr).slice(-3)
-        }: Root [pageSize: ${page.pageSize}, emptylistAddr: ${page.emptylistAddr}, nextPage: ${page.nextPage}]`,
-      );
-      return;
-    }
-    if (page instanceof EmptylistPage) {
-      const emptyPages: Array<number> = [];
-      for (let i = 0; i < page.count; i++) {
-        emptyPages.push(page.readAtIndex(i));
-      }
-      console.info(
-        `${
-          ("000" + page.addr).slice(-3)
-        }: Emptylist [prevPage: ${page.prevPage}, count: ${page.count}, nextPage: ${page.nextPage}] Pages: ${
-          emptyPages.join(", ")
-        }`,
-      );
-      return;
-    }
-    if (page instanceof DataPage) {
-      console.info(
-        `${
-          ("000" + page.addr).slice(-3)
-        }: Data [prevPage: ${page.prevPage}, nextPage: ${page.nextPage}]`,
-      );
-      return;
-    }
-    if (page instanceof EntryPage) {
-      console.info(
-        `${
-          ("000" + page.addr).slice(-3)
-        }: Entry(${page.type}) [nextPage: ${page.nextPage}]`,
-      );
-      return;
-    }
-    throw new Error(`Invalid page`);
-  }
-
-  protected printBuffer(addr: number, buffer: Uint8Array): void {
-    if (buffer[0] === PageType.Empty) {
-      console.info(`${("000" + addr).slice(-3)}: Empty`);
-      return;
-    }
-    if (buffer[0] === PageType.Root) {
-      const page = new RootPage(this.pageSize, buffer, false);
-      this.printPage(page);
-      return;
-    }
-    if (buffer[0] === PageType.Emptylist) {
-      const page = new EmptylistPage(this.pageSize, addr, buffer, false);
-      this.printPage(page);
-      return;
-    }
-    if (buffer[0] === PageType.Data) {
-      const page = new DataPage(this.pageSize, addr, buffer, false);
-      this.printPage(page);
-      return;
-    }
-    const page = new EntryPage(this.pageSize, addr, buffer, buffer[0], false);
-    this.printPage(page);
-    return;
-  }
-
-  debug({ includeMemory = true }: { includeMemory?: boolean } = {}) {
-    console.info("=======");
+  debug(
+    { includeMemory = true }: { includeMemory?: boolean } = {},
+  ): Array<string> {
+    const result: Array<string> = [];
     if (this.filePageCount === 0) {
-      console.info(" <Empty File>");
-      return;
+      return [];
     }
     for (let addr = 0; addr < this.filePageCount; addr++) {
       const cached = this.cache.get(addr);
       if (cached && includeMemory) {
-        this.printPage(cached);
+        result.push(internalPageToString(cached));
       } else {
         const pageBuffer = this.readPageBuffer(addr);
-        this.printBuffer(addr, pageBuffer);
+        result.push(pageBufferToString(addr, pageBuffer, this.pageSize));
       }
     }
+    return result;
   }
+}
+
+function internalPageToString(page: InternalPageAny): string {
+  if (page.type === PageType.Empty) {
+    return `${("000" + page.addr).slice(-3)}: Empty`;
+  }
+  if (page instanceof InternalRootPage) {
+    return `${
+      ("000" + page.addr).slice(-3)
+    }: Root [pageSize: ${page.pageSize}, emptylistAddr: ${page.emptylistAddr}, nextPage: ${page.nextPage}]`;
+  }
+  if (page instanceof InternalEmptylistPage) {
+    const emptyPages: Array<number> = [];
+    for (let i = 0; i < page.count; i++) {
+      emptyPages.push(page.readAtIndex(i));
+    }
+    return `${
+      ("000" + page.addr).slice(-3)
+    }: Emptylist [prevPage: ${page.prevPage}, count: ${page.count}, nextPage: ${page.nextPage}] Pages: ${
+      emptyPages.join(", ")
+    }`;
+  }
+  if (page instanceof InternalDataPage) {
+    return `${
+      ("000" + page.addr).slice(-3)
+    }: Data [prevPage: ${page.prevPage}, nextPage: ${page.nextPage}]`;
+  }
+  if (page instanceof InternalEntryPage) {
+    return `${
+      ("000" + page.addr).slice(-3)
+    }: Entry(${page.type}) [nextPage: ${page.nextPage}]`;
+  }
+  throw new Error(`Invalid page`);
+}
+
+function pageBufferToString(
+  addr: number,
+  buffer: Uint8Array,
+  pageSize: number,
+): string {
+  if (buffer[0] === PageType.Empty) {
+    return (`${("000" + addr).slice(-3)}: Empty`);
+  }
+  if (buffer[0] === PageType.Root) {
+    const page = new InternalRootPage(pageSize, buffer, false);
+    return internalPageToString(page);
+  }
+  if (buffer[0] === PageType.Emptylist) {
+    const page = new InternalEmptylistPage(
+      pageSize,
+      addr,
+      buffer,
+      false,
+    );
+    return internalPageToString(page);
+  }
+  if (buffer[0] === PageType.Data) {
+    const page = new InternalDataPage(pageSize, addr, buffer, false);
+    return internalPageToString(page);
+  }
+  const page = new InternalEntryPage(
+    pageSize,
+    addr,
+    buffer,
+    buffer[0],
+    false,
+  );
+  return internalPageToString(page);
 }

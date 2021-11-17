@@ -105,17 +105,22 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
     return this;
   }
 
-  public readRest(): Uint8Array {
-    return this.buffer.subarray(this.restOffset);
+  public readRest(start?: number, length?: number): Uint8Array {
+    const startOffset = this.restOffset + (start ?? 0);
+    const endOffset = startOffset + (length ?? this.restLength);
+    if (endOffset > this.buffer.byteLength) {
+      throw new Error(`Out of range read`);
+    }
+    return this.buffer.subarray(startOffset, endOffset);
   }
 
-  public writeRest(content: Uint8Array): this {
-    if (content.byteLength > this.restLength) {
-      throw new Error(
-        `Cannot write buffer of size ${content.byteLength} into rest of size ${this.restLength}`,
-      );
+  public writeRest(content: Uint8Array, start?: number): this {
+    const startOffset = this.restOffset + (start ?? 0);
+    const endOffset = startOffset + content.byteLength;
+    if (endOffset > this.buffer.byteLength) {
+      throw new Error(`Out of range write`);
     }
-    this.buffer.set(content, this.lastOffset);
+    this.buffer.set(content, startOffset);
     this.dirtyManager.markDirty();
     return this;
   }
