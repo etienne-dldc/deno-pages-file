@@ -31,7 +31,7 @@ Deno.test("Create root in file", () => {
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
-  file.readRootPage();
+  file.getRootPage().read();
   file.save();
   assertEquals(file.debug(), [
     "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
@@ -48,12 +48,12 @@ Deno.test("Write root", () => {
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
-  file.writeRootPage(new Uint8Array([255, 255, 255]));
-  assertEquals(file.readRootPage(0, 3), new Uint8Array([255, 255, 255]));
+  file.getRootPage().write(new Uint8Array([255, 255, 255]));
+  assertEquals(file.getRootPage().read(0, 3), new Uint8Array([255, 255, 255]));
   file.save();
   file.close();
   const file2 = new PagedFile(path, { pageSize: 256 });
-  assertEquals(file2.readRootPage(0, 3), new Uint8Array([255, 255, 255]));
+  assertEquals(file2.getRootPage().read(0, 3), new Uint8Array([255, 255, 255]));
   assertEquals(file2.debug(), [
     "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
   ]);
@@ -69,11 +69,11 @@ Deno.test("Write root without saving", () => {
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
-  file.writeRootPage(new Uint8Array([255, 255, 255]));
-  assertEquals(file.readRootPage(0, 3), new Uint8Array([255, 255, 255]));
+  file.getRootPage().write(new Uint8Array([255, 255, 255]));
+  assertEquals(file.getRootPage().read(0, 3), new Uint8Array([255, 255, 255]));
   file.close();
   const file2 = new PagedFile(path, { pageSize: 256 });
-  assertEquals(file2.readRootPage(0, 3), new Uint8Array([0, 0, 0]));
+  assertEquals(file2.getRootPage().read(0, 3), new Uint8Array([0, 0, 0]));
   assertEquals(file2.debug(), []);
   file2.close();
   Deno.removeSync(path);
@@ -87,7 +87,7 @@ Deno.test("Write root multi pages", () => {
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
-  file.writeRootPage(new Uint8Array(300));
+  file.getRootPage().write(new Uint8Array(300));
   file.save();
   assertEquals(file.debug(), [
     "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 1]",
@@ -105,7 +105,7 @@ Deno.test("Write root multi pages at index", () => {
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
-  file.writeRootPage(new Uint8Array(300), 260);
+  file.getRootPage().write(new Uint8Array(300), 260);
   file.save();
   assertEquals(file.debug(), [
     "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 1]",
