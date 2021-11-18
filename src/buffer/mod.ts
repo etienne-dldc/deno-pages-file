@@ -35,8 +35,9 @@ export type {
   IBlockNamed,
   IBlockNamedAny,
   IBlockNames,
+  IBlockRValueByName,
   IBlocksFixedAny,
-  IBlockValueByName,
+  IBlockWValueByName,
   IFixedBlockListItem,
 } from "./FixedBlockList.ts";
 export { calcStringSize } from "./utils.ts";
