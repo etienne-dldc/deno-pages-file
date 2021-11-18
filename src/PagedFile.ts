@@ -4,9 +4,10 @@ import {
   InternalEmptylistPage,
   InternalEmptyPage,
   InternalEntryPage,
-  InternalPageAny,
+  InternalPage,
   InternalRootPage,
   PageType,
+  RawInternalPage,
 } from "./InternalPage.ts";
 import { Page } from "./Page.ts";
 
@@ -26,7 +27,7 @@ export class PagedFile {
   public readonly cacheSize: number;
 
   private readonly file: Deno.File;
-  private readonly cache = new LeastRecentlyUsedMap<number, InternalPageAny>();
+  private readonly cache = new LeastRecentlyUsedMap<number, InternalPage>();
   private readonly pageCache = new Map<number, Page>();
 
   private isClosed = false;
@@ -161,11 +162,12 @@ export class PagedFile {
 
   private instantiatePage(page: InternalRootPage | InternalEntryPage): Page {
     return new Page({
-      readLinkedPageContent: this.readLinkedPageContent.bind(this),
-      writeLinkedPageContent: this.writeLinkedPageContent.bind(this),
+      getEmptyPageAddr: this.getEmptyPageAddr.bind(this),
+      getInternalDataPage: this.getInternalDataPage.bind(this),
       onPageClosed: this.onPageClosed.bind(this),
-      checkCache: this.checkCache.bind(this),
       deleteInternalPage: this.deleteInternalPage.bind(this),
+      deleteInternalDataPage: this.deleteInternalDataPage.bind(this),
+      checkCache: this.checkCache.bind(this),
     }, page);
   }
 
@@ -186,241 +188,241 @@ export class PagedFile {
     });
   }
 
-  private writeLinkedPageContent(
-    page: InternalRootPage | InternalEntryPage,
-    content: Uint8Array,
-    start?: number,
-    clearAfter?: boolean,
-  ) {
-    const startOffset = start ?? 0;
-    return this.writeLinkedPageContentInternal(page, {
-      type: "offset",
-      offset: startOffset,
-      content,
-    }, clearAfter ?? false);
-  }
+  // private writeLinkedPageContent(
+  //   page: InternalRootPage | InternalEntryPage,
+  //   content: Uint8Array,
+  //   start?: number,
+  //   clearAfter?: boolean,
+  // ) {
+  //   const startOffset = start ?? 0;
+  //   return this.writeLinkedPageContentInternal(page, {
+  //     type: "offset",
+  //     offset: startOffset,
+  //     content,
+  //   }, clearAfter ?? false);
+  // }
 
-  private writeLinkedPageContentInternal(
-    page: InternalRootPage | InternalEntryPage | InternalDataPage,
-    current: { type: "offset"; offset: number; content: Uint8Array } | {
-      type: "write";
-      content: Uint8Array;
-    },
-    clearAfter: boolean,
-  ): void {
-    const pageLength = page.contentLength;
-    if (current.type === "offset") {
-      if (current.offset >= pageLength) {
-        // skip current page
-        const nextPage = this.writeLinkedPageContentInternalByAddr(
-          page.nextPage,
-          {
-            type: "offset",
-            offset: current.offset - pageLength,
-            content: current.content,
-          },
-          clearAfter,
-        );
-        page.nextPage = nextPage;
-        return;
-      }
-      // write current page
-      const startOffset = current.offset;
-      const endOffset = startOffset + current.content.byteLength;
-      if (endOffset <= pageLength) {
-        // everything is in page
-        page.writeContent(current.content, startOffset);
-        if (clearAfter) {
-          this.deleteInternalDataPage(page.nextPage);
-        }
-        return;
-      }
-      // write multiple pages
-      page.writeContent(current.content.subarray(0, pageLength));
-      const nextPage = this.writeLinkedPageContentInternalByAddr(
-        page.nextPage,
-        {
-          type: "write",
-          content: current.content.subarray(pageLength),
-        },
-        clearAfter,
-      );
-      page.nextPage = nextPage;
-      return;
-    }
-    // writing
-    if (current.content.byteLength <= pageLength) {
-      page.writeContent(current.content);
-      if (clearAfter) {
-        this.deleteInternalDataPage(page.nextPage);
-      }
-      return;
-    }
-    // write multiple pages
-    page.writeContent(current.content.subarray(0, pageLength));
-    const nextPage = this.writeLinkedPageContentInternalByAddr(page.nextPage, {
-      type: "write",
-      content: current.content.subarray(pageLength),
-    }, clearAfter);
-    page.nextPage = nextPage;
-    return;
-  }
+  // private writeLinkedPageContentInternal(
+  //   page: InternalRootPage | InternalEntryPage | InternalDataPage,
+  //   current: { type: "offset"; offset: number; content: Uint8Array } | {
+  //     type: "write";
+  //     content: Uint8Array;
+  //   },
+  //   clearAfter: boolean,
+  // ): void {
+  //   const pageLength = page.contentFacade.byteLength;
+  //   if (current.type === "offset") {
+  //     if (current.offset >= pageLength) {
+  //       // skip current page
+  //       const nextPage = this.writeLinkedPageContentInternalByAddr(
+  //         page.nextPage,
+  //         {
+  //           type: "offset",
+  //           offset: current.offset - pageLength,
+  //           content: current.content,
+  //         },
+  //         clearAfter,
+  //       );
+  //       page.nextPage = nextPage;
+  //       return;
+  //     }
+  //     // write current page
+  //     const startOffset = current.offset;
+  //     const endOffset = startOffset + current.content.byteLength;
+  //     if (endOffset <= pageLength) {
+  //       // everything is in page
+  //       page.writeContent(current.content, startOffset);
+  //       if (clearAfter) {
+  //         this.deleteInternalDataPage(page.nextPage);
+  //       }
+  //       return;
+  //     }
+  //     // write multiple pages
+  //     page.writeContent(current.content.subarray(0, pageLength));
+  //     const nextPage = this.writeLinkedPageContentInternalByAddr(
+  //       page.nextPage,
+  //       {
+  //         type: "write",
+  //         content: current.content.subarray(pageLength),
+  //       },
+  //       clearAfter,
+  //     );
+  //     page.nextPage = nextPage;
+  //     return;
+  //   }
+  //   // writing
+  //   if (current.content.byteLength <= pageLength) {
+  //     page.writeContent(current.content);
+  //     if (clearAfter) {
+  //       this.deleteInternalDataPage(page.nextPage);
+  //     }
+  //     return;
+  //   }
+  //   // write multiple pages
+  //   page.writeContent(current.content.subarray(0, pageLength));
+  //   const nextPage = this.writeLinkedPageContentInternalByAddr(page.nextPage, {
+  //     type: "write",
+  //     content: current.content.subarray(pageLength),
+  //   }, clearAfter);
+  //   page.nextPage = nextPage;
+  //   return;
+  // }
 
-  private writeLinkedPageContentInternalByAddr(
-    pageAddr: number,
-    current: { type: "offset"; offset: number; content: Uint8Array } | {
-      type: "write";
-      content: Uint8Array;
-    },
-    clearAfter: boolean,
-  ): number {
-    if (pageAddr === 0) {
-      return this.writeLinkedPageContentInternalByAddr(
-        this.getEmptyPageAddr(),
-        current,
-        clearAfter,
-      );
-    }
-    const page = this.getInternalDataPage(pageAddr, false);
-    this.writeLinkedPageContentInternal(page, current, clearAfter);
-    return page.addr;
-  }
+  // private writeLinkedPageContentInternalByAddr(
+  //   pageAddr: number,
+  //   current: { type: "offset"; offset: number; content: Uint8Array } | {
+  //     type: "write";
+  //     content: Uint8Array;
+  //   },
+  //   clearAfter: boolean,
+  // ): number {
+  //   if (pageAddr === 0) {
+  //     return this.writeLinkedPageContentInternalByAddr(
+  //       this.getEmptyPageAddr(),
+  //       current,
+  //       clearAfter,
+  //     );
+  //   }
+  //   const page = this.getInternalDataPage(pageAddr, false);
+  //   this.writeLinkedPageContentInternal(page, current, clearAfter);
+  //   return page.addr;
+  // }
 
-  private writeToDataPage(
-    pageAddr: number,
-    prevAddr: number,
-    content: Uint8Array,
-  ): number {
-    const resolvedPageAddr = pageAddr === 0
-      ? this.getEmptyPageAddr()
-      : pageAddr;
-    const page = this.getInternalDataPage(resolvedPageAddr, false);
-    page.prevPage = prevAddr;
-    if (content.byteLength <= page.contentLength) {
-      page.writeContent(content);
-      this.deleteInternalDataPage(page.nextPage);
-      page.nextPage = 0;
-    } else {
-      page.writeContent(content.subarray(0, page.contentLength));
-      const nextAddr = this.writeToDataPage(
-        page.nextPage,
-        page.addr,
-        content.subarray(page.contentLength),
-      );
-      page.nextPage = nextAddr;
-    }
-    return resolvedPageAddr;
-  }
+  // private writeToDataPage(
+  //   pageAddr: number,
+  //   prevAddr: number,
+  //   content: Uint8Array,
+  // ): number {
+  //   const resolvedPageAddr = pageAddr === 0
+  //     ? this.getEmptyPageAddr()
+  //     : pageAddr;
+  //   const page = this.getInternalDataPage(resolvedPageAddr, false);
+  //   page.prevPage = prevAddr;
+  //   if (content.byteLength <= page.contentLength) {
+  //     page.writeContent(content);
+  //     this.deleteInternalDataPage(page.nextPage);
+  //     page.nextPage = 0;
+  //   } else {
+  //     page.writeContent(content.subarray(0, page.contentLength));
+  //     const nextAddr = this.writeToDataPage(
+  //       page.nextPage,
+  //       page.addr,
+  //       content.subarray(page.contentLength),
+  //     );
+  //     page.nextPage = nextAddr;
+  //   }
+  //   return resolvedPageAddr;
+  // }
 
-  private readLinkedPageContent(
-    page: InternalRootPage | InternalEntryPage,
-    start?: number,
-    length?: number,
-  ): Uint8Array {
-    const startOffset = start ?? 0;
-    return this.readLinkedPageContentInternal(page, {
-      type: "offset",
-      offset: startOffset,
-    }, length);
-  }
+  // private readLinkedPageContent(
+  //   page: InternalRootPage | InternalEntryPage,
+  //   start?: number,
+  //   length?: number,
+  // ): Uint8Array {
+  //   const startOffset = start ?? 0;
+  //   return this.readLinkedPageContentInternal(page, {
+  //     type: "offset",
+  //     offset: startOffset,
+  //   }, length);
+  // }
 
-  private readLinkedPageContentInternal(
-    page: InternalRootPage | InternalEntryPage | InternalDataPage,
-    current: { type: "offset"; offset: number } | {
-      type: "read";
-      content: Uint8Array;
-    },
-    length?: number,
-  ): Uint8Array {
-    const pageLength = page.contentLength;
-    if (current.type === "offset") {
-      if (current.offset >= pageLength) {
-        // skip current page
-        return this.readLinkedPageContentInternalByAddr(page.nextPage, {
-          type: "offset",
-          offset: current.offset - pageLength,
-        }, length);
-      }
-      // read current page
-      const startOffset = current.offset;
-      if (length === undefined) {
-        // read full page
-        const pageContent = page.readContent(startOffset);
-        if (page.nextPage === 0) {
-          // we are done
-          return pageContent;
-        }
-        // read next page
-        return this.readLinkedPageContentInternalByAddr(page.nextPage, {
-          type: "read",
-          content: pageContent,
-        }, length);
-      }
-      const endOffset = startOffset + length;
-      if (endOffset <= pageLength) {
-        // everything is in page
-        return page.readContent(startOffset, endOffset);
-      }
-      // must read multiple pages
-      if (page.nextPage === 0) {
-        throw new Error(`Out of range read`);
-      }
-      const pageContent = page.readContent(startOffset);
-      return this.readLinkedPageContentInternalByAddr(page.nextPage, {
-        type: "read",
-        content: pageContent,
-      }, length);
-    }
-    // reading
-    if (length === undefined) {
-      // no length read everything
-      const content = this.mergeBuffers(current.content, page.readContent());
-      if (page.nextPage === 0) {
-        // we are done
-        return content;
-      }
-      // read next page
-      return this.readLinkedPageContentInternalByAddr(page.nextPage, {
-        type: "read",
-        content,
-      }, length);
-    }
-    const rest = length - current.content.byteLength;
-    if (rest <= pageLength) {
-      return this.mergeBuffers(current.content, page.readContent(0, rest));
-    }
-    if (page.nextPage === 0) {
-      throw new Error(`Out of range read`);
-    }
-    const content = this.mergeBuffers(current.content, page.readContent());
-    return this.readLinkedPageContentInternalByAddr(page.nextPage, {
-      type: "read",
-      content,
-    }, length);
-  }
+  // private readLinkedPageContentInternal(
+  //   page: InternalRootPage | InternalEntryPage | InternalDataPage,
+  //   current: { type: "offset"; offset: number } | {
+  //     type: "read";
+  //     content: Uint8Array;
+  //   },
+  //   length?: number,
+  // ): Uint8Array {
+  //   const pageLength = page.contentLength;
+  //   if (current.type === "offset") {
+  //     if (current.offset >= pageLength) {
+  //       // skip current page
+  //       return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+  //         type: "offset",
+  //         offset: current.offset - pageLength,
+  //       }, length);
+  //     }
+  //     // read current page
+  //     const startOffset = current.offset;
+  //     if (length === undefined) {
+  //       // read full page
+  //       const pageContent = page.readContent(startOffset);
+  //       if (page.nextPage === 0) {
+  //         // we are done
+  //         return pageContent;
+  //       }
+  //       // read next page
+  //       return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+  //         type: "read",
+  //         content: pageContent,
+  //       }, length);
+  //     }
+  //     const endOffset = startOffset + length;
+  //     if (endOffset <= pageLength) {
+  //       // everything is in page
+  //       return page.readContent(startOffset, endOffset);
+  //     }
+  //     // must read multiple pages
+  //     if (page.nextPage === 0) {
+  //       throw new Error(`Out of range read`);
+  //     }
+  //     const pageContent = page.readContent(startOffset);
+  //     return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+  //       type: "read",
+  //       content: pageContent,
+  //     }, length);
+  //   }
+  //   // reading
+  //   if (length === undefined) {
+  //     // no length read everything
+  //     const content = this.mergeBuffers(current.content, page.readContent());
+  //     if (page.nextPage === 0) {
+  //       // we are done
+  //       return content;
+  //     }
+  //     // read next page
+  //     return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+  //       type: "read",
+  //       content,
+  //     }, length);
+  //   }
+  //   const rest = length - current.content.byteLength;
+  //   if (rest <= pageLength) {
+  //     return this.mergeBuffers(current.content, page.readContent(0, rest));
+  //   }
+  //   if (page.nextPage === 0) {
+  //     throw new Error(`Out of range read`);
+  //   }
+  //   const content = this.mergeBuffers(current.content, page.readContent());
+  //   return this.readLinkedPageContentInternalByAddr(page.nextPage, {
+  //     type: "read",
+  //     content,
+  //   }, length);
+  // }
 
-  private readLinkedPageContentInternalByAddr(
-    pageAddr: number,
-    current: { type: "offset"; offset: number } | {
-      type: "read";
-      content: Uint8Array;
-    },
-    length?: number,
-  ): Uint8Array {
-    if (pageAddr === 0) {
-      throw new Error(`Out of range read`);
-    }
-    const page = this.getInternalDataPage(pageAddr, true);
-    return this.readLinkedPageContentInternal(page, current, length);
-  }
+  // private readLinkedPageContentInternalByAddr(
+  //   pageAddr: number,
+  //   current: { type: "offset"; offset: number } | {
+  //     type: "read";
+  //     content: Uint8Array;
+  //   },
+  //   length?: number,
+  // ): Uint8Array {
+  //   if (pageAddr === 0) {
+  //     throw new Error(`Out of range read`);
+  //   }
+  //   const page = this.getInternalDataPage(pageAddr, true);
+  //   return this.readLinkedPageContentInternal(page, current, length);
+  // }
 
-  private mergeBuffers(left: Uint8Array, right: Uint8Array): Uint8Array {
-    const size = left.byteLength + right.byteLength;
-    const resultArr = new Uint8Array(size);
-    resultArr.set(left);
-    resultArr.set(right, left.byteLength);
-    return resultArr;
-  }
+  // private mergeBuffers(left: Uint8Array, right: Uint8Array): Uint8Array {
+  //   const size = left.byteLength + right.byteLength;
+  //   const resultArr = new Uint8Array(size);
+  //   resultArr.set(left);
+  //   resultArr.set(right, left.byteLength);
+  //   return resultArr;
+  // }
 
   private getLastEmptylistPage(): InternalEmptylistPage | null {
     const root = this.getInternalRootPage();
@@ -475,7 +477,7 @@ export class PagedFile {
     this.deleteInternalDataPage(page.nextPage);
   }
 
-  private emptyInternalPage(page: InternalPageAny) {
+  private emptyInternalPage(page: InternalPage) {
     page.markDeleted();
     this.cache.set(page.addr, new InternalEmptyPage(this.pageSize, page.addr));
   }
@@ -498,26 +500,16 @@ export class PagedFile {
     emptylist.push(addr);
   }
 
-  private ensureInternalPageType(
-    page: InternalPageAny,
-    type: PageType.Root,
-  ): InternalRootPage;
-  private ensureInternalPageType(
-    page: InternalPageAny,
-    type: PageType.Emptylist,
-  ): InternalEmptylistPage;
-  private ensureInternalPageType(
-    page: InternalPageAny,
-    type: PageType.Data,
-  ): InternalDataPage;
-  private ensureInternalPageType(
-    page: InternalPageAny,
-    type: number,
-  ): InternalEntryPage;
-  private ensureInternalPageType(
-    page: InternalPageAny,
-    type: PageType,
-  ): InternalPageAny {
+  // deno-fmt-ignore
+  private ensureInternalPageType(page: InternalPage, type: PageType.Root): InternalRootPage;
+  // deno-fmt-ignore
+  private ensureInternalPageType(page: InternalPage, type: PageType.Emptylist): InternalEmptylistPage;
+  // deno-fmt-ignore
+  private ensureInternalPageType(page: InternalPage, type: PageType.Data): InternalDataPage;
+  // deno-fmt-ignore
+  private ensureInternalPageType(page: InternalPage, type: number): InternalEntryPage;
+  // deno-fmt-ignore
+  private ensureInternalPageType(page: InternalPage, type: PageType): InternalPage {
     if (page.type !== type) {
       throw new Error(`Page type mismatch`);
     }
@@ -573,7 +565,7 @@ export class PagedFile {
     pageAddr: number,
     expectedType: number,
     mustExist: boolean,
-  ): InternalPageAny {
+  ): InternalPage {
     const cached = this.cache.get(pageAddr);
     const isEmpty = Boolean(cached && cached.type !== PageType.Empty);
     if (cached) {
@@ -609,21 +601,28 @@ export class PagedFile {
     pageAddr: number,
     buffer: Uint8Array,
     isNew: boolean,
-  ): InternalPageAny {
+  ): InternalPage {
     const type: PageType = buffer[0];
+    const basePage = new RawInternalPage(
+      this.pageSize,
+      pageAddr,
+      buffer,
+      type,
+      isNew,
+    );
     if (type === PageType.Empty) {
       throw new Error(`Cannot instantiate empty pagbe`);
     }
     if (type === PageType.Root) {
-      return new InternalRootPage(this.pageSize, buffer, isNew);
+      return new InternalRootPage(basePage, isNew);
     }
     if (type === PageType.Emptylist) {
-      return new InternalEmptylistPage(this.pageSize, pageAddr, buffer, isNew);
+      return new InternalEmptylistPage(basePage);
     }
     if (type === PageType.Data) {
-      return new InternalDataPage(this.pageSize, pageAddr, buffer, isNew);
+      return new InternalDataPage(basePage);
     }
-    return new InternalEntryPage(this.pageSize, pageAddr, buffer, type, isNew);
+    return new InternalEntryPage(basePage);
   }
 
   /**
@@ -700,7 +699,7 @@ export class PagedFile {
   }
 }
 
-function internalPageToString(page: InternalPageAny): string {
+function internalPageToString(page: InternalPage): string {
   if (page.type === PageType.Empty) {
     return `${("000" + page.addr).slice(-3)}: Empty`;
   }
@@ -738,32 +737,23 @@ function pageBufferToString(
   buffer: Uint8Array,
   pageSize: number,
 ): string {
-  if (buffer[0] === PageType.Empty) {
+  const type = buffer[0];
+  const basePage = new RawInternalPage(pageSize, addr, buffer, type, false);
+  if (type === PageType.Empty) {
     return (`${("000" + addr).slice(-3)}: Empty`);
   }
-  if (buffer[0] === PageType.Root) {
-    const page = new InternalRootPage(pageSize, buffer, false);
+  if (type === PageType.Root) {
+    const page = new InternalRootPage(basePage, false);
     return internalPageToString(page);
   }
-  if (buffer[0] === PageType.Emptylist) {
-    const page = new InternalEmptylistPage(
-      pageSize,
-      addr,
-      buffer,
-      false,
-    );
+  if (type === PageType.Emptylist) {
+    const page = new InternalEmptylistPage(basePage);
     return internalPageToString(page);
   }
-  if (buffer[0] === PageType.Data) {
-    const page = new InternalDataPage(pageSize, addr, buffer, false);
+  if (type === PageType.Data) {
+    const page = new InternalDataPage(basePage);
     return internalPageToString(page);
   }
-  const page = new InternalEntryPage(
-    pageSize,
-    addr,
-    buffer,
-    buffer[0],
-    false,
-  );
+  const page = new InternalEntryPage(basePage);
   return internalPageToString(page);
 }

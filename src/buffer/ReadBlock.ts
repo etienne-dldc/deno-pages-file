@@ -1,4 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
+import { IBufferFacade } from "./BufferFacade.ts";
 import { IReadBlock, IReadBlockFixed, IReadBlockVariable } from "./types.d.ts";
 
 export const ReadBlock = (() => {
@@ -12,7 +13,7 @@ export const ReadBlock = (() => {
     size: 8,
     read(buf, pos) {
       for (let i = 0; i < 8; i++) {
-        u8arr[i] = buf[pos + i];
+        u8arr[i] = buf.readByte(pos + i);
       }
       return f64arr[0];
     },
@@ -22,10 +23,10 @@ export const ReadBlock = (() => {
     size: 4,
     read(buf, pos) {
       return (
-        ((buf[pos] << 24) |
-          (buf[pos + 1] << 16) |
-          (buf[pos + 2] << 8) |
-          buf[pos + 3]) >>>
+        ((buf.readByte(pos) << 24) |
+          (buf.readByte(pos + 1) << 16) |
+          (buf.readByte(pos + 2) << 8) |
+          buf.readByte(pos + 3)) >>>
         0
       );
     },
@@ -33,18 +34,18 @@ export const ReadBlock = (() => {
 
   const uint16: IReadBlockFixed<number> = {
     size: 2,
-    read: (buf, pos) => (buf[pos] << 8) | buf[pos + 1],
+    read: (buf, pos) => (buf.readByte(pos) << 8) | buf.readByte(pos + 1),
   };
 
   const uint8: IReadBlockFixed<number> = {
     size: 1,
-    read: (buf, pos) => buf[pos],
+    read: (buf, pos) => buf.readByte(pos),
   };
 
   function bufferFixed(len: number): IReadBlockFixed<Uint8Array> {
     return {
       size: len,
-      read: (buf, pos) => buf.slice(pos, pos + len),
+      read: (buf, pos) => buf.read(pos, len),
     };
   }
 
@@ -72,7 +73,7 @@ export const ReadBlock = (() => {
       size: length,
       read: (buf, pos) => {
         return decoder.decode(
-          buf.subarray(pos, pos + length),
+          buf.read(pos, length),
         );
       },
     };
@@ -88,7 +89,7 @@ export const ReadBlock = (() => {
       const len = encodedUint.read(buf, pos);
       const sizeLen = encodedUint.size(buf, pos);
       const str = decoder.decode(
-        buf.subarray(pos + sizeLen, pos + sizeLen + len),
+        buf.read(pos + sizeLen, len),
       );
       return str;
     },
@@ -150,7 +151,7 @@ export const ReadBlock = (() => {
 
   function resolveSize(
     block: IReadBlock<any>,
-    buffer: Uint8Array,
+    buffer: IBufferFacade,
     offset: number,
   ): number {
     return typeof block.size === "number"
@@ -159,7 +160,7 @@ export const ReadBlock = (() => {
   }
 
   function dynamic<Value>(
-    getBlock: (buf: Uint8Array, pos: number) => IReadBlock<Value>,
+    getBlock: (buf: IBufferFacade, pos: number) => IReadBlock<Value>,
   ): IReadBlock<Value> {
     return {
       size: (buf, pos) => resolveSize(getBlock(buf, pos), buf, pos),

@@ -13,48 +13,52 @@ export const WriteBlock = (() => {
     size: 8,
     write(buf, pos, val) {
       f64arr[0] = val;
-      buf.set(u8arr, pos);
+      buf.write(u8arr, pos);
     },
   };
 
   const uint32: IWriteBlock<number> = {
     size: 4,
     write(buf, pos, val) {
-      buf[pos] = (val >>> 24) & 0xff;
-      buf[pos + 1] = (val >>> 16) & 0xff;
-      buf[pos + 2] = (val >>> 8) & 0xff;
-      buf[pos + 3] = val & 0xff;
+      buf.writeByte(pos, (val >>> 24) & 0xff);
+      buf.writeByte(pos + 1, (val >>> 16) & 0xff);
+      buf.writeByte(pos + 2, (val >>> 8) & 0xff);
+      buf.writeByte(pos + 3, val & 0xff);
     },
   };
 
   const uint16: IWriteBlock<number> = {
     size: 2,
     write(buf, pos, val) {
-      buf[pos] = (val >> 8) & 0xff;
-      buf[pos + 1] = val & 0xff;
+      buf.writeByte(pos, (val >> 8) & 0xff);
+      buf.writeByte(pos + 1, val & 0xff);
     },
   };
 
   const uint8: IWriteBlock<number> = {
     size: 1,
-    write: (buf, pos, val) => buf[pos] = val & 0xff,
+    write: (buf, pos, val) => {
+      buf.writeByte(pos, val & 0xff);
+    },
   };
 
   const buffer: IWriteBlockVariable<Uint8Array> = {
     size: (val) => val.byteLength,
-    write: (buf, pos, val) => buf.set(val, pos),
+    write: (buf, pos, val) => buf.write(val, pos),
   };
 
   const string: IWriteBlockVariable<string> = {
     size: (val) => calcStringSize(val),
-    write: (buf, pos, val) => encoder.encodeInto(val, buf.subarray(pos)),
+    write: (buf, pos, val) => {
+      buf.write(encoder.encode(val), pos);
+    },
   };
 
   function bufferFixed(len: number): IWriteBlock<Uint8Array> {
     return {
       size: len,
       write(buf, pos, val) {
-        buf.set(val, pos);
+        buf.write(val, pos);
       },
     };
   }
@@ -92,7 +96,7 @@ export const WriteBlock = (() => {
       const len = calcStringSize(val);
       const sizeLen = encodedUint.size(len);
       encodedUint.write(buf, pos, len);
-      encoder.encodeInto(val, buf.subarray(pos + sizeLen));
+      buf.write(encoder.encode(val), pos + sizeLen);
     },
   };
 

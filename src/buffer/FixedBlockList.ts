@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { DirtyManager } from "./DirtyManager.ts";
+import { IBufferFacade } from "./BufferFacade.ts";
 import { IBlockFixed } from "./types.d.ts";
 
 export type IBlockNamed<N extends string, Value> = {
@@ -32,21 +32,17 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
   }
 
   public readonly schema: FixedBlocks;
+  public readonly restOffset: number;
 
-  private readonly buffer: Uint8Array;
   private readonly byName = new Map<string, IFixedBlockListItem>();
-  private readonly lastOffset: number;
-
-  private readonly dirtyManager: DirtyManager;
+  private readonly facade: IBufferFacade;
 
   constructor(
-    buffer: Uint8Array,
     schema: FixedBlocks,
-    dirtyManager: DirtyManager = new DirtyManager(),
+    facade: IBufferFacade,
   ) {
-    this.buffer = buffer;
     this.schema = schema;
-    this.dirtyManager = dirtyManager;
+    this.facade = facade;
     let offset = 0;
     schema.forEach(({ name, block }) => {
       if (this.byName.has(name)) {
@@ -58,27 +54,15 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
       this.byName.set(name, { offset, block });
       offset += block.read.size;
     });
-    this.lastOffset = offset;
+    this.restOffset = offset;
   }
 
   public get fixedLength() {
-    return this.lastOffset;
-  }
-
-  public get restOffset() {
-    return this.lastOffset;
+    return this.restOffset;
   }
 
   public get restLength() {
-    return this.buffer.byteLength - this.lastOffset;
-  }
-
-  public get dirty() {
-    return this.dirtyManager.dirty;
-  }
-
-  public markClean() {
-    this.dirtyManager.markClean();
+    return this.facade.byteLength - this.restOffset;
   }
 
   public read<N extends IBlockNames<FixedBlocks>>(
@@ -88,7 +72,7 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
     }
-    const value = obj.block.read.read(this.buffer, obj.offset);
+    const value = obj.block.read.read(this.facade, obj.offset);
     return value;
   }
 
@@ -100,34 +84,32 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
     }
-    obj.block.write.write(this.buffer, obj.offset, value);
-    this.dirtyManager.markDirty();
+    obj.block.write.write(this.facade, obj.offset, value);
     return this;
   }
 
-  public readRest(start?: number, length?: number): Uint8Array {
+  public readRest(
+    start?: number,
+    length?: number,
+  ): Uint8Array {
     const startOffset = this.restOffset + (start ?? 0);
-    const endOffset = startOffset + (length ?? this.restLength);
-    if (endOffset > this.buffer.byteLength) {
-      throw new Error(`Out of range read`);
-    }
-    return this.buffer.subarray(startOffset, endOffset);
+    return this.facade.read(startOffset, length);
   }
 
-  public writeRest(content: Uint8Array, start?: number): this {
+  public writeRest(
+    content: Uint8Array,
+    start?: number,
+  ): this {
     const startOffset = this.restOffset + (start ?? 0);
-    const endOffset = startOffset + content.byteLength;
-    if (endOffset > this.buffer.byteLength) {
-      throw new Error(`Out of range write`);
-    }
-    this.buffer.set(content, startOffset);
-    this.dirtyManager.markDirty();
+    this.facade.write(content, startOffset);
     return this;
   }
 
-  public restAsFixedBlockList<FixedBlocks extends IBlocksFixedAny>(
-    blocks: FixedBlocks,
-  ): FixedBlockList<FixedBlocks> {
-    return new FixedBlockList(this.readRest(), blocks, this.dirtyManager);
+  public selectRest(
+    start?: number,
+    length?: number,
+  ): IBufferFacade {
+    const startOffset = this.restOffset + (start ?? 0);
+    return this.facade.select(startOffset, length);
   }
 }

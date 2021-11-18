@@ -14,7 +14,7 @@ const encoder = new TextEncoder();
 
 file.debug();
 
-file.writeRootPage(
+file.getRootPage().writeAndCleanup(
   encoder.encode(
     [
       "Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root",
@@ -39,7 +39,7 @@ file.save();
 
 file.debug();
 
-file.writeRootPage(
+file.getRootPage().writeAndCleanup(
   encoder.encode(
     [
       "Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root, Hello Root",

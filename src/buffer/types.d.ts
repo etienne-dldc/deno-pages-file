@@ -1,21 +1,23 @@
+import { IBufferFacade } from "./BufferFacade.ts";
+
 export type IReadBlockFixed<Value> = {
   readonly size: number;
-  readonly read: (buffer: Uint8Array, offset: number) => Value;
+  readonly read: (buffer: IBufferFacade, offset: number) => Value;
 };
 
 export type IReadBlockVariable<Value> = {
-  readonly size: (buffer: Uint8Array, offset: number) => number;
-  readonly read: (buffer: Uint8Array, offset: number) => Value;
+  readonly size: (buffer: IBufferFacade, offset: number) => number;
+  readonly read: (buffer: IBufferFacade, offset: number) => Value;
 };
 
 export type IWriteBlockVariable<Value> = {
   readonly size: (value: Value) => number;
-  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
+  readonly write: (buffer: IBufferFacade, offset: number, value: Value) => void;
 };
 
 export type IWriteBlockFixed<Value> = {
   readonly size: number;
-  readonly write: (buffer: Uint8Array, offset: number, value: Value) => void;
+  readonly write: (buffer: IBufferFacade, offset: number, value: Value) => void;
 };
 
 export type IReadBlock<Value> =
