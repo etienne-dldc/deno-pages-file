@@ -19,7 +19,7 @@ export const Block = {
       read: ReadBlock.fixedString(buf.byteLength),
       write: WriteBlock.transformFixed(
         WriteBlock.bufferFixed(buf.byteLength),
-        (_value: void) => buf,
+        (_value: null) => buf,
       ),
     };
   },
