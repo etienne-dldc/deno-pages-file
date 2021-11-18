@@ -31,10 +31,10 @@ export type IBlockWValueByName<
 export type IFixedBlockListItem = { offset: number; block: IBlockFixed<any> };
 
 export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
-  public static named<N extends string, Value>(
+  public static named<N extends string, RValue, WValue>(
     name: N,
-    block: IBlockFixed<Value>,
-  ): IBlockNamed<N, Value> {
+    block: IBlockFixed<RValue, WValue>,
+  ): IBlockNamed<N, RValue, WValue> {
     return { name, block };
   }
 
