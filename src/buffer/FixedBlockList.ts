@@ -2,9 +2,9 @@
 import { IBufferFacade } from "./BufferFacade.ts";
 import { IBlockFixed } from "./types.d.ts";
 
-export type IBlockNamed<N extends string, Value> = {
+export type IBlockNamed<N extends string, RValue, WValue = RValue> = {
   name: N;
-  block: IBlockFixed<Value>;
+  block: IBlockFixed<RValue, WValue>;
 };
 
 export type IBlockNamedAny = IBlockNamed<string, any>;
@@ -14,11 +14,18 @@ export type IBlocksFixedAny = ReadonlyArray<IBlockNamedAny>;
 export type IBlockNames<Schema extends IBlocksFixedAny> =
   Schema[number]["name"];
 
-export type IBlockValueByName<
+export type IBlockRValueByName<
   Schema extends IBlocksFixedAny,
   Name extends Schema[number]["name"],
 > = Extract<Schema[number], { name: Name }> extends IBlockNamed<string, infer V>
   ? V
+  : never;
+
+export type IBlockWValueByName<
+  Schema extends IBlocksFixedAny,
+  Name extends Schema[number]["name"],
+> = Extract<Schema[number], { name: Name }> extends
+  IBlockNamed<string, any, infer V> ? V
   : never;
 
 export type IFixedBlockListItem = { offset: number; block: IBlockFixed<any> };
@@ -67,7 +74,7 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
 
   public read<N extends IBlockNames<FixedBlocks>>(
     name: N,
-  ): IBlockValueByName<FixedBlocks, N> {
+  ): IBlockRValueByName<FixedBlocks, N> {
     const obj = this.byName.get(name);
     if (!obj) {
       throw new Error(`Invalid name "${name}"`);
@@ -78,7 +85,7 @@ export class FixedBlockList<FixedBlocks extends IBlocksFixedAny> {
 
   public write<N extends IBlockNames<FixedBlocks>>(
     name: N,
-    value: IBlockValueByName<FixedBlocks, N>,
+    value: IBlockWValueByName<FixedBlocks, N>,
   ): this {
     const obj = this.byName.get(name);
     if (!obj) {

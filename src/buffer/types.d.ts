@@ -28,12 +28,12 @@ export type IWriteBlock<Value> =
   | IWriteBlockFixed<Value>
   | IWriteBlockVariable<Value>;
 
-export type IBlockFixed<Value> = {
-  read: IReadBlockFixed<Value>;
-  write: IWriteBlockFixed<Value>;
+export type IBlockFixed<RValue, WValue = RValue> = {
+  read: IReadBlockFixed<RValue>;
+  write: IWriteBlockFixed<WValue>;
 };
 
-export type IBlock<Value> = {
-  read: IReadBlock<Value>;
-  write: IWriteBlock<Value>;
+export type IBlock<RValue, WValue = RValue> = {
+  read: IReadBlock<RValue>;
+  write: IWriteBlock<WValue>;
 };
