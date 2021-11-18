@@ -1,5 +1,9 @@
 // deno-lint-ignore-file no-explicit-any
-import { IWriteBlock, IWriteBlockVariable } from "./types.d.ts";
+import {
+  IWriteBlock,
+  IWriteBlockFixed,
+  IWriteBlockVariable,
+} from "./types.d.ts";
 import { calcStringSize } from "./utils.ts";
 
 export const WriteBlock = (() => {
@@ -17,7 +21,7 @@ export const WriteBlock = (() => {
     },
   };
 
-  const uint32: IWriteBlock<number> = {
+  const uint32: IWriteBlockFixed<number> = {
     size: 4,
     write(buf, pos, val) {
       buf.writeByte(pos, (val >>> 24) & 0xff);
@@ -27,7 +31,7 @@ export const WriteBlock = (() => {
     },
   };
 
-  const uint16: IWriteBlock<number> = {
+  const uint16: IWriteBlockFixed<number> = {
     size: 2,
     write(buf, pos, val) {
       buf.writeByte(pos, (val >> 8) & 0xff);
@@ -35,7 +39,7 @@ export const WriteBlock = (() => {
     },
   };
 
-  const uint8: IWriteBlock<number> = {
+  const uint8: IWriteBlockFixed<number> = {
     size: 1,
     write: (buf, pos, val) => {
       buf.writeByte(pos, val & 0xff);
@@ -54,7 +58,7 @@ export const WriteBlock = (() => {
     },
   };
 
-  function bufferFixed(len: number): IWriteBlock<Uint8Array> {
+  function bufferFixed(len: number): IWriteBlockFixed<Uint8Array> {
     return {
       size: len,
       write(buf, pos, val) {
@@ -160,6 +164,17 @@ export const WriteBlock = (() => {
     };
   }
 
+  function transformFixed<Inner, Outer>(
+    block: IWriteBlockFixed<Inner>,
+    transform: (val: Outer) => Inner,
+  ): IWriteBlockFixed<Outer> {
+    const size = block.size;
+    return {
+      size,
+      write: (buf, pos, val) => block.write(buf, pos, transform(val)),
+    };
+  }
+
   function transform<Inner, Outer>(
     block: IWriteBlock<Inner>,
     transform: (val: Outer) => Inner,
@@ -220,6 +235,7 @@ export const WriteBlock = (() => {
     // utils
     seq,
     transform,
+    transformFixed,
     inject,
     many,
     dynamic,

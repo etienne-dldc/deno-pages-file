@@ -17,7 +17,7 @@ export const Block = {
     const buf = encoder.encode(str);
     return {
       read: ReadBlock.fixedString(buf.byteLength),
-      write: WriteBlock.transform(
+      write: WriteBlock.transformFixed(
         WriteBlock.bufferFixed(buf.byteLength),
         () => buf,
       ),
