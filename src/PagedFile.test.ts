@@ -115,3 +115,53 @@ Deno.test("Write root multi pages at index", () => {
   file.close();
   Deno.removeSync(path);
 });
+
+Deno.test("Create page", () => {
+  const path = resolve(
+    Deno.cwd(),
+    "src",
+    "fixture",
+    Math.floor(Math.random() * 100000) + ".db",
+  );
+  const file = new PagedFile(path, { pageSize: 256 });
+  const page = file.createPage();
+  page.write(new Uint8Array(300), 260);
+  file.save();
+  assertEquals(file.debug(), [
+    "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
+    "001: Entry(4) [nextPage: 2]",
+    "002: Data [prevPage: 0, nextPage: 3]",
+    "003: Data [prevPage: 0, nextPage: 0]",
+  ]);
+  file.close();
+  Deno.removeSync(path);
+});
+
+Deno.test("Create page custom type", () => {
+  const path = resolve(
+    Deno.cwd(),
+    "src",
+    "fixture",
+    Math.floor(Math.random() * 100000) + ".db",
+  );
+  const file = new PagedFile(path, { pageSize: 256 });
+  const page = file.createPage(42);
+  const content = new Uint8Array(300);
+  content.set(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), 0);
+  page.write(content);
+  file.save();
+  assertEquals(file.debug(), [
+    "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
+    "001: Entry(46) [nextPage: 2]",
+    "002: Data [prevPage: 0, nextPage: 0]",
+  ]);
+  file.close();
+  const file2 = new PagedFile(path, { pageSize: 256 });
+  const page2 = file2.getPage(page.addr, 42);
+  assertEquals(
+    page2.read(0, 10),
+    new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+  );
+  file2.close();
+  Deno.removeSync(path);
+});

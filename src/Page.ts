@@ -10,6 +10,7 @@ import {
   IWriteValue,
   PagedBufferFacade,
 } from "./buffer/mod.ts";
+import { PageType } from "./InternalPage.ts";
 
 export type ParentRef = {
   getInternalDataPage: PagedFile["getInternalDataPage"];
@@ -68,8 +69,9 @@ export class Page implements IBufferFacade {
     return this.mainPage.addr;
   }
 
-  public get type() {
-    return this.mainPage.type;
+  // root page return 0
+  public get type(): number {
+    return this.isRoot ? 0 : this.mainPage.type - PageType.Entry;
   }
 
   public get isRoot() {

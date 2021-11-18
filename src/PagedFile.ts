@@ -15,6 +15,8 @@ const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
 );
 
+const MAX_ENTRY_PAGE_TYPE = 255 - PageType.Entry;
+
 export type PagedFileOptions = {
   pageSize?: number;
   cacheSize?: number;
@@ -78,16 +80,16 @@ export class PagedFile {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    return this.getPage(addr, expectedType);
+    return this.getPageFromCache(addr, this.offsetEntryPageType(expectedType));
   }
 
-  public createPage(pageType: number = PageType.Entry): Page {
+  public createPage(pageType = 0): Page {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
     const mainPage = this.getInternalEntryPage(
       this.getEmptyPageAddr(),
-      pageType,
+      this.offsetEntryPageType(pageType),
       false,
     );
     const page = this.instantiatePage(mainPage);
@@ -95,14 +97,14 @@ export class PagedFile {
     return page;
   }
 
-  public deletePage(addr: number, pageType: number = PageType.Entry) {
+  public deletePage(addr: number, pageType = 0) {
     if (this.isClosed) {
       throw new Error(`Cannot delete page on closed file`);
     }
     if (addr === 0) {
       return;
     }
-    this.getPageFromCache(addr, pageType).delete();
+    this.getPageFromCache(addr, this.offsetEntryPageType(pageType)).delete();
   }
 
   public save() {
@@ -125,16 +127,16 @@ export class PagedFile {
 
   // PRIVATE
 
-  private validateEntryPageType(type: number): number {
-    if (type < PageType.Entry) {
+  private offsetEntryPageType(type: number): number {
+    if (type < 0) {
       throw new Error(
         `Page type must be greater or equal to ${PageType.Entry}`,
       );
     }
-    if (type > 255) {
-      throw new Error(`Page type cannot exceed 255 (1 byte)`);
+    if (type > MAX_ENTRY_PAGE_TYPE) {
+      throw new Error(`Page type cannot exceed ${MAX_ENTRY_PAGE_TYPE}`);
     }
-    return type;
+    return PageType.Entry + type;
   }
 
   private deleteInternalPage(page: InternalRootPage | InternalEntryPage) {
@@ -150,7 +152,11 @@ export class PagedFile {
     }
     const mainPage = addr === 0
       ? this.getInternalRootPage()
-      : this.getInternalEntryPage(addr, expectedType, true);
+      : this.getInternalEntryPage(
+        addr,
+        expectedType,
+        true,
+      );
     const page = this.instantiatePage(mainPage);
     this.pageCache.set(addr, page);
     return page;
@@ -531,7 +537,7 @@ export class PagedFile {
     return this.ensureInternalPageType(
       this.getInternalPage(
         addr,
-        this.validateEntryPageType(expectedType),
+        expectedType,
         mustExist,
       ),
       expectedType,
