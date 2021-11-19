@@ -41,4 +41,4 @@ export type {
   IFixedBlockListItem,
 } from "./FixedBlockList.ts";
 export { calcStringSize } from "./utils.ts";
-export { BinvalReadBlock, BinvalWriteBlock } from "./Binval.ts";
+export { BinvalBlock, BinvalReadBlock, BinvalWriteBlock } from "./Binval.ts";
