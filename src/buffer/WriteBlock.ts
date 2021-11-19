@@ -67,7 +67,10 @@ export const WriteBlock = (() => {
     };
   }
 
-  const encodedBoolean = transformFixed(uint8, (val) => Number(val));
+  const encodedBoolean: IWriteBlockFixed<boolean> = transformFixed(
+    uint8,
+    (val) => Number(val),
+  );
 
   const encodedUintSize = (val: number) => {
     return val < 254
