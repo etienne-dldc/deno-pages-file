@@ -84,7 +84,7 @@ export class PagedFile {
     return this.getPageFromCache(0, InternalPageType.Root);
   }
 
-  public getPage(addr: number, pageType: number | null = 0): Page {
+  public getPage(addr: number, pageType: number | null = null): Page {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
@@ -94,7 +94,7 @@ export class PagedFile {
     );
   }
 
-  public createPage(pageType: number | null = 0): Page {
+  public createPage(pageType: number | null = null): Page {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
@@ -108,7 +108,7 @@ export class PagedFile {
     return page;
   }
 
-  public deletePage(addr: number, pageType: number | null = 0) {
+  public deletePage(addr: number, pageType: number | null = null) {
     if (this.isClosed) {
       throw new Error(`Cannot delete page on closed file`);
     }
