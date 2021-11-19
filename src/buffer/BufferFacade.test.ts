@@ -80,3 +80,46 @@ Deno.test("PagedBufferFacade", () => {
     new Uint8Array([0, 0, 0, 0, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0]),
   );
 });
+
+Deno.test("PagedBufferFacade cleanup", () => {
+  const bufs = [
+    new SimpleBufferFacade(new Uint8Array(5)),
+    new SimpleBufferFacade(new Uint8Array(5)),
+    new SimpleBufferFacade(new Uint8Array(5)),
+  ];
+
+  let deletedPage: Array<number> = [];
+
+  const buf = new PagedBufferFacade<number>(0, (index) => {
+    const b = bufs[index];
+    if (!b) {
+      return null;
+    }
+    return { buffer: b, nextPageInfo: index + 1 };
+  }, (pageIndex) => {
+    deletedPage.push(pageIndex);
+  });
+
+  buf.cleanupAfter(4);
+  assertEquals(deletedPage, [1]);
+
+  deletedPage = [];
+
+  buf.cleanupAfter(5);
+  assertEquals(deletedPage, [2]);
+
+  deletedPage = [];
+
+  buf.cleanupAfter(10);
+  assertEquals(deletedPage, [3]);
+
+  deletedPage = [];
+
+  buf.cleanupAfter(14);
+  assertEquals(deletedPage, [3]);
+
+  deletedPage = [];
+
+  buf.cleanupAfter(20);
+  assertEquals(deletedPage, [3]);
+});

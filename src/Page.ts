@@ -143,6 +143,16 @@ export class Page implements IBufferFacade {
     return this;
   }
 
+  // delete pages after offset
+  public cleanupAfter(offset: number): this {
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed page`);
+    }
+    this.contentFacade.cleanupAfter(offset);
+    this.parent.checkCache();
+    return this;
+  }
+
   public writeByte(index: number, val: number): this {
     if (this.isClosed) {
       throw new Error(`Cannot write closed page`);

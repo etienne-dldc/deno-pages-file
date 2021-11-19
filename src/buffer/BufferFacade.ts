@@ -407,6 +407,28 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
     return this.writeInternal(content, offset, true);
   }
 
+  // delete pages after offset (data at offset is kept)
+  public cleanupAfter(offset: number): this {
+    let skipRest = offset;
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "write");
+      if (page === null) {
+        break;
+      }
+      pageInfo = page.nextPageInfo;
+      const pageLength = page.buffer.byteLength;
+      if (skipRest >= pageLength) {
+        skipRest -= pageLength;
+        continue;
+      }
+      // done
+      break;
+    }
+    this.deleteNextPage(pageInfo);
+    return this;
+  }
+
   public write(content: IWriteValue, offset = 0): this {
     return this.writeInternal(content, offset, false);
   }
@@ -433,50 +455,6 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
   public select(start = 0, length?: number): IBufferFacade {
     return new SelectBufferFacade(this, start, length);
   }
-
-  // protected resetComplete() {
-  //   this.complete = null;
-  // }
-
-  // private cleanupPage(index: number): void {
-  //   const page = this.getPage(index, "read");
-  //   if (page === null) {
-  //     return;
-  //   }
-  //   // const nextIndex = index + 1;
-  //   // this.pages.splice(nextIndex, this.pages.length - nextIndex);
-  //   // this.resetComplete();
-  //   this.deleteNextPage(page.nextPageInfo);
-  // }
-
-  // private getPage(
-  //   pageInfo: PageInfo,
-  //   reason: "read" | "write",
-  // ): null | IPagedBufferFacadePage<PageInfo> {
-  //   // const cached = this.pages[index];
-  //   // if (cached) {
-  //   //   return cached;
-  //   // }
-  //   // if (this.complete) {
-  //   //   return null;
-  //   // }
-  //   // const lastPageIndex = this.pages.length - 1;
-  //   while (this.pages.length <= index) {
-  //     const pageInfo = lastPageIndex === -1
-  //       ? this.initialPageInfo
-  //       : this.pages[lastPageIndex].nextPageInfo;
-  //     const page = this.getNextPage(pageInfo, reason);
-  //     if (page === null) {
-  //       this.complete = {};
-  //       break;
-  //     }
-  //     this.pages.push(page);
-  //   }
-  //   if (this.pages[index]) {
-  //     return this.pages[index];
-  //   }
-  //   return null;
-  // }
 
   private writeInternal(
     content: Uint8Array | IBufferFacade,
