@@ -1,7 +1,6 @@
 export { PagedFile } from "./src/PagedFile.ts";
 export type { PagedFileOptions } from "./src/PagedFile.ts";
 export { Page } from "./src/Page.ts";
-export { PageType } from "./src/InternalPage.ts";
 export {
   BinvalBlock,
   BinvalReadBlock,
