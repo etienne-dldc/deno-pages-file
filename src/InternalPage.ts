@@ -10,7 +10,7 @@ import {
   WriteBlock,
 } from "./buffer/mod.ts";
 
-export enum PageType {
+export enum InternalPageType {
   Empty = 0,
   Root = 1,
   Emptylist = 2,
@@ -19,9 +19,9 @@ export enum PageType {
 }
 
 export class RawInternalPage {
+  public internalType: InternalPageType | number;
   public readonly pageSize: number;
   public readonly addr: number;
-  public readonly type: PageType | number;
   public readonly contentFacade: IBufferFacade;
 
   private readonly dirtyManager: DirtyManager;
@@ -32,18 +32,33 @@ export class RawInternalPage {
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    type: PageType | number,
+    type: InternalPageType | number,
     isDirty: boolean,
   ) {
     this.pageSize = pageSize;
     this.addr = addr;
-    this.type = type;
+    this.internalType = type;
     this.dirtyManager = new DirtyManager(isDirty);
     this.fullFacade = new TrackedBufferFacade(
       new SimpleBufferFacade(buffer),
       this.dirtyManager,
     );
     this.contentFacade = this.fullFacade.select(1); // skip page type byte
+  }
+
+  public get type(): number {
+    return this.internalType;
+  }
+
+  public set type(newType: number) {
+    if (
+      this.internalType < InternalPageType.Entry ||
+      newType < InternalPageType.Entry
+    ) {
+      throw new Error(`Only entry type are allowed to change`);
+    }
+    this.internalType = newType;
+    this.fullFacade.writeByte(0, newType);
   }
 
   public get dirty(): boolean {
@@ -86,15 +101,17 @@ export class RawInternalPage {
 export class InternalPage {
   public readonly pageSize: number;
   public readonly addr: number;
-  public readonly type: PageType | number;
 
-  private readonly parent: RawInternalPage;
+  protected readonly parent: RawInternalPage;
 
   constructor(parent: RawInternalPage) {
     this.parent = parent;
     this.pageSize = parent.pageSize;
     this.addr = parent.addr;
-    this.type = parent.type;
+  }
+
+  public get type(): number {
+    return this.parent.type;
   }
 
   public get dirty(): boolean {
@@ -121,7 +138,7 @@ export class InternalEmptyPage extends InternalPage {
       pageSize,
       addr,
       buffer,
-      PageType.Empty,
+      InternalPageType.Empty,
       true,
     );
     super(parent);
@@ -299,12 +316,20 @@ export class InternalEntryPage extends InternalPage {
   private readonly blocks: FixedBlockList<typeof ENTRY_HEADER_BLOCKS>;
 
   constructor(parent: RawInternalPage) {
-    if (parent.type < PageType.Entry) {
+    if (parent.type < InternalPageType.Entry) {
       throw new Error(`Invalid page type`);
     }
     super(parent);
     this.blocks = new FixedBlockList(ENTRY_HEADER_BLOCKS, parent.contentFacade);
     this.contentFacade = this.blocks.selectRest();
+  }
+
+  public get type(): number {
+    return this.parent.type;
+  }
+
+  public set type(newType: number) {
+    this.parent.type = newType;
   }
 
   public get nextPage() {

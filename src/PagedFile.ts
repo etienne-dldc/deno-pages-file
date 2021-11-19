@@ -5,17 +5,15 @@ import {
   InternalEmptyPage,
   InternalEntryPage,
   InternalPage,
+  InternalPageType,
   InternalRootPage,
-  PageType,
   RawInternalPage,
 } from "./InternalPage.ts";
-import { Page } from "./Page.ts";
+import { entryPageTypeToInternalPageType, Page } from "./Page.ts";
 
 const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
 );
-
-const MAX_ENTRY_PAGE_TYPE = 255 - PageType.Entry;
 
 export type PagedFileOptions = {
   pageSize?: number;
@@ -83,14 +81,17 @@ export class PagedFile {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    return this.getPageFromCache(0, PageType.Root);
+    return this.getPageFromCache(0, InternalPageType.Root);
   }
 
   public getPage(addr: number, pageType = 0): Page {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    return this.getPageFromCache(addr, this.offsetEntryPageType(pageType));
+    return this.getPageFromCache(
+      addr,
+      entryPageTypeToInternalPageType(pageType),
+    );
   }
 
   public createPage(pageType = 0): Page {
@@ -99,7 +100,7 @@ export class PagedFile {
     }
     const mainPage = this.getInternalEntryPage(
       this.getEmptyPageAddr(),
-      this.offsetEntryPageType(pageType),
+      entryPageTypeToInternalPageType(pageType),
       false,
     );
     const page = this.instantiatePage(mainPage);
@@ -114,7 +115,8 @@ export class PagedFile {
     if (addr === 0) {
       return;
     }
-    this.getPageFromCache(addr, this.offsetEntryPageType(pageType)).delete();
+    this.getPageFromCache(addr, entryPageTypeToInternalPageType(pageType))
+      .delete();
   }
 
   public getOpenPages(): Array<Page> {
@@ -147,18 +149,6 @@ export class PagedFile {
   }
 
   // PRIVATE
-
-  private offsetEntryPageType(type: number): number {
-    if (type < 0) {
-      throw new Error(
-        `Page type must be greater or equal to ${PageType.Entry}`,
-      );
-    }
-    if (type > MAX_ENTRY_PAGE_TYPE) {
-      throw new Error(`Page type cannot exceed ${MAX_ENTRY_PAGE_TYPE}`);
-    }
-    return PageType.Entry + type;
-  }
 
   private deleteInternalPage(addr: number, type: number) {
     const page = this.getInternalRootOrEntry(addr, type);
@@ -304,15 +294,15 @@ export class PagedFile {
   }
 
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: PageType.Root): InternalRootPage;
+  private ensureInternalPageType(page: InternalPage, type: InternalPageType.Root): InternalRootPage;
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: PageType.Emptylist): InternalEmptylistPage;
+  private ensureInternalPageType(page: InternalPage, type: InternalPageType.Emptylist): InternalEmptylistPage;
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: PageType.Data): InternalDataPage;
+  private ensureInternalPageType(page: InternalPage, type: InternalPageType.Data): InternalDataPage;
   // deno-fmt-ignore
   private ensureInternalPageType(page: InternalPage, type: number): InternalEntryPage;
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: PageType): InternalPage {
+  private ensureInternalPageType(page: InternalPage, type: InternalPageType): InternalPage {
     if (page.type !== type) {
       throw new Error(`Page type mismatch`);
     }
@@ -321,8 +311,8 @@ export class PagedFile {
 
   private getInternalRootPage(): InternalRootPage {
     return this.ensureInternalPageType(
-      this.getInternalPage(0, PageType.Root, false),
-      PageType.Root,
+      this.getInternalPage(0, InternalPageType.Root, false),
+      InternalPageType.Root,
     );
   }
 
@@ -349,8 +339,8 @@ export class PagedFile {
       throw new Error(`Cannot get null pointer Data page`);
     }
     return this.ensureInternalPageType(
-      this.getInternalPage(addr, PageType.Data, mustExist),
-      PageType.Data,
+      this.getInternalPage(addr, InternalPageType.Data, mustExist),
+      InternalPageType.Data,
     );
   }
 
@@ -359,8 +349,8 @@ export class PagedFile {
     mustExist: boolean,
   ): InternalEmptylistPage {
     return this.ensureInternalPageType(
-      this.getInternalPage(addr, PageType.Emptylist, mustExist),
-      PageType.Emptylist,
+      this.getInternalPage(addr, InternalPageType.Emptylist, mustExist),
+      InternalPageType.Emptylist,
     );
   }
 
@@ -370,9 +360,9 @@ export class PagedFile {
     mustExist: boolean,
   ): InternalPage {
     const cached = this.cache.get(pageAddr);
-    const isEmpty = Boolean(cached && cached.type !== PageType.Empty);
+    const isEmpty = Boolean(cached && cached.type !== InternalPageType.Empty);
     if (cached) {
-      if (cached.type === PageType.Empty) {
+      if (cached.type === InternalPageType.Empty) {
         const buffer = new Uint8Array(this.pageSize);
         buffer[0] = expectedType;
         const page = this.instantiateInternalPage(pageAddr, buffer, true);
@@ -405,7 +395,7 @@ export class PagedFile {
     buffer: Uint8Array,
     isNew: boolean,
   ): InternalPage {
-    const type: PageType = buffer[0];
+    const type: InternalPageType = buffer[0];
     const basePage = new RawInternalPage(
       this.pageSize,
       pageAddr,
@@ -413,16 +403,16 @@ export class PagedFile {
       type,
       isNew,
     );
-    if (type === PageType.Empty) {
+    if (type === InternalPageType.Empty) {
       throw new Error(`Cannot instantiate empty pagbe`);
     }
-    if (type === PageType.Root) {
+    if (type === InternalPageType.Root) {
       return new InternalRootPage(basePage, isNew);
     }
-    if (type === PageType.Emptylist) {
+    if (type === InternalPageType.Emptylist) {
       return new InternalEmptylistPage(basePage);
     }
-    if (type === PageType.Data) {
+    if (type === InternalPageType.Data) {
       return new InternalDataPage(basePage);
     }
     return new InternalEntryPage(basePage);
@@ -446,7 +436,7 @@ export class PagedFile {
     }
     if (isOnFile) {
       const buffer = this.readPageBuffer(pageAddr);
-      if (buffer[0] === PageType.Empty) {
+      if (buffer[0] === InternalPageType.Empty) {
         // if page is empty => change type (empty page buffer is empty so we can reuse it)
         buffer[0] = expectedType;
         return [buffer, true];
@@ -503,7 +493,7 @@ export class PagedFile {
 }
 
 function internalPageToString(page: InternalPage): string {
-  if (page.type === PageType.Empty) {
+  if (page.type === InternalPageType.Empty) {
     return `${("000" + page.addr).slice(-3)}: Empty`;
   }
   if (page instanceof InternalRootPage) {
@@ -542,18 +532,18 @@ function pageBufferToString(
 ): string {
   const type = buffer[0];
   const basePage = new RawInternalPage(pageSize, addr, buffer, type, false);
-  if (type === PageType.Empty) {
+  if (type === InternalPageType.Empty) {
     return (`${("000" + addr).slice(-3)}: Empty`);
   }
-  if (type === PageType.Root) {
+  if (type === InternalPageType.Root) {
     const page = new InternalRootPage(basePage, false);
     return internalPageToString(page);
   }
-  if (type === PageType.Emptylist) {
+  if (type === InternalPageType.Emptylist) {
     const page = new InternalEmptylistPage(basePage);
     return internalPageToString(page);
   }
-  if (type === PageType.Data) {
+  if (type === InternalPageType.Data) {
     const page = new InternalDataPage(basePage);
     return internalPageToString(page);
   }

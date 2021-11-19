@@ -10,7 +10,7 @@ import {
   IWriteValue,
   PagedBufferFacade,
 } from "./buffer/mod.ts";
-import { PageType } from "./InternalPage.ts";
+import { InternalPageType } from "./InternalPage.ts";
 
 export type ParentRef = {
   getInternalDataPage: PagedFile["getInternalDataPage"];
@@ -27,8 +27,8 @@ type PageInfo = null | InternalDataPage | InternalRootPage | InternalEntryPage;
 export class Page implements IBufferFacade {
   public readonly addr: number;
 
+  private internalType: number;
   private readonly parent: ParentRef;
-  private readonly internalType: number;
   private readonly contentFacade: PagedBufferFacade<PageInfo>;
   private readonly internalPageCache = new Map<
     number | null,
@@ -81,7 +81,23 @@ export class Page implements IBufferFacade {
 
   // root page return 0
   public get type(): number {
-    return this.isRoot ? 0 : this.internalType - PageType.Entry;
+    return this.isRoot ? 0 : internalPageTypeToEntryPageType(this.internalType);
+  }
+
+  public set type(newType: number) {
+    if (this.isRoot) {
+      throw new Error(`Cannot change root type`);
+    }
+    const internalPage = this.parent.getInternalRootOrEntry(
+      this.addr,
+      this.internalType,
+    );
+    if (internalPage instanceof InternalRootPage) {
+      throw new Error(`Cannot change root type`);
+    }
+    const fixedType = entryPageTypeToInternalPageType(newType);
+    internalPage.type = fixedType;
+    this.internalType = fixedType;
   }
 
   public get isRoot() {
@@ -207,4 +223,22 @@ export class Page implements IBufferFacade {
     this.internalPageCache.set(addr, internalPage);
     return internalPage;
   }
+}
+
+const MAX_ENTRY_PAGE_TYPE = 255 - InternalPageType.Entry;
+
+export function entryPageTypeToInternalPageType(type: number): number {
+  if (type < 0) {
+    throw new Error(
+      `Page type must be greater or equal to ${InternalPageType.Entry}`,
+    );
+  }
+  if (type > MAX_ENTRY_PAGE_TYPE) {
+    throw new Error(`Page type cannot exceed ${MAX_ENTRY_PAGE_TYPE}`);
+  }
+  return InternalPageType.Entry + type;
+}
+
+export function internalPageTypeToEntryPageType(type: number): number {
+  return type - InternalPageType.Entry;
 }
