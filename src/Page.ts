@@ -19,59 +19,68 @@ export type ParentRef = {
   deleteInternalPage: PagedFile["deleteInternalPage"];
   deleteInternalDataPage: PagedFile["deleteInternalDataPage"];
   checkCache: PagedFile["checkCache"];
+  getInternalRootOrEntry: PagedFile["getInternalRootOrEntry"];
 };
 
 type PageInfo = null | InternalDataPage | InternalRootPage | InternalEntryPage;
 
 export class Page implements IBufferFacade {
+  public readonly addr: number;
+
   private readonly parent: ParentRef;
-  private readonly mainPage: InternalRootPage | InternalEntryPage;
+  private readonly internalType: number;
   private readonly contentFacade: PagedBufferFacade<PageInfo>;
 
   private isClosed = false;
 
   constructor(
     parent: ParentRef,
-    mainPage: InternalRootPage | InternalEntryPage,
+    addr: number,
+    type: number,
   ) {
     this.parent = parent;
-    this.mainPage = mainPage;
-    this.contentFacade = new PagedBufferFacade<PageInfo>(null, // getNextPage
-    (prevPage, mode) => {
-      if (prevPage === null) {
-        return { buffer: mainPage.contentFacade, nextPageInfo: mainPage };
-      }
-      const addr = prevPage.nextPage;
-      if (addr !== 0) {
-        const page = parent.getInternalDataPage(addr, true);
-        return { buffer: page.contentFacade, nextPageInfo: page };
-      }
-      // addr is 0 meaning prev page does not have nextPage
-      if (mode === "write") {
-        // create new page
-        const newPageAddr = parent.getEmptyPageAddr();
-        const page = parent.getInternalDataPage(newPageAddr, false);
-        prevPage.nextPage = newPageAddr;
-        return { buffer: page.contentFacade, nextPageInfo: page };
-      }
-      // trying to read page 0 => there are no more pages
-      return null;
-    }, // deleteNextPage
-    (prevPage) => {
-      if (prevPage === null) {
-        return;
-      }
-      parent.deleteInternalDataPage(prevPage.nextPage);
-    });
-  }
-
-  public get addr() {
-    return this.mainPage.addr;
+    this.addr = addr;
+    this.internalType = type;
+    this.contentFacade = new PagedBufferFacade<PageInfo>(
+      null,
+      // getNextPage
+      (prevPage, mode) => {
+        if (prevPage === null) {
+          const mainPage = this.parent.getInternalRootOrEntry(
+            this.addr,
+            this.internalType,
+          );
+          return { buffer: mainPage.contentFacade, nextPageInfo: mainPage };
+        }
+        const addr = prevPage.nextPage;
+        if (addr !== 0) {
+          const page = parent.getInternalDataPage(addr, true);
+          return { buffer: page.contentFacade, nextPageInfo: page };
+        }
+        // addr is 0 meaning prev page does not have nextPage
+        if (mode === "write") {
+          // create new page
+          const newPageAddr = parent.getEmptyPageAddr();
+          const page = parent.getInternalDataPage(newPageAddr, false);
+          prevPage.nextPage = newPageAddr;
+          return { buffer: page.contentFacade, nextPageInfo: page };
+        }
+        // trying to read page 0 => there are no more pages
+        return null;
+      },
+      // deleteNextPage
+      (prevPage) => {
+        if (prevPage === null) {
+          return;
+        }
+        parent.deleteInternalDataPage(prevPage.nextPage);
+      },
+    );
   }
 
   // root page return 0
   public get type(): number {
-    return this.isRoot ? 0 : this.mainPage.type - PageType.Entry;
+    return this.isRoot ? 0 : this.internalType - PageType.Entry;
   }
 
   public get isRoot() {
@@ -163,7 +172,7 @@ export class Page implements IBufferFacade {
     if (this.isRoot) {
       throw new Error(`Can't delete Root page`);
     }
-    this.parent.deleteInternalPage(this.mainPage);
+    this.parent.deleteInternalPage(this.addr, this.internalType);
     this.close();
   }
 }

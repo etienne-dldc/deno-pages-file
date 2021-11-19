@@ -16,9 +16,7 @@ export type IGetNextPage<PageInfo> = (
   reason: "read" | "write",
 ) => null | IPagedBufferFacadePage<PageInfo>;
 
-export type IDeleteNextPage<PageInfo> = (
-  info: PageInfo,
-) => void;
+export type IDeleteNextPage<PageInfo> = (lastPageInfo: PageInfo) => void;
 
 export type IOnGuard = (reason: "read" | "write" | "select") => void;
 
@@ -305,8 +303,8 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
   private readonly getNextPage: IGetNextPage<PageInfo>;
   private readonly deleteNextPage: IDeleteNextPage<PageInfo>;
   private readonly initialPageInfo: PageInfo;
-  private readonly pages: Array<IPagedBufferFacadePage<PageInfo>> = [];
-  private complete: null | { byteLength?: number } = null;
+  // private readonly pages: Array<IPagedBufferFacadePage<PageInfo>> = [];
+  // private complete: null | { byteLength?: number } = null;
 
   constructor(
     initialPageInfo: PageInfo,
@@ -319,18 +317,27 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
   }
 
   public get byteLength(): number {
-    if (this.complete && this.complete.byteLength !== undefined) {
-      return this.complete.byteLength;
-    }
+    // if (this.complete && this.complete.byteLength !== undefined) {
+    //   return this.complete.byteLength;
+    // }
     let size = 0;
-    for (let pageIndex = 0; true; pageIndex++) {
-      const page = this.getPage(pageIndex, "read");
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "read");
       if (page === null) {
         break;
       }
       size += page.buffer.byteLength;
+      pageInfo = page.nextPageInfo;
     }
-    this.complete = { byteLength: size };
+    // for (let pageIndex = 0; true; pageIndex++) {
+    //   const page = this.getPage(pageIndex, "read");
+    //   if (page === null) {
+    //     break;
+    //   }
+    //   size += page.buffer.byteLength;
+    // }
+    // this.complete = { byteLength: size };
     return size;
   }
 
@@ -340,14 +347,16 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
     let skipRest = start;
     let readRest = length ?? Infinity;
     let written = 0;
-    for (let pageIndex = 0; true; pageIndex++) {
-      const page = this.getPage(pageIndex, "read");
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "read");
       if (page === null) {
         if (length === undefined) {
           break;
         }
         throw new Error(`Out of range read`);
       }
+      pageInfo = page.nextPageInfo;
       const pageLength = page.buffer.byteLength;
       if (skipRest >= pageLength) {
         skipRest -= pageLength;
@@ -362,8 +371,8 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
         page.buffer[UNSAFE_ACCESS](skipRest, readSize),
         written,
       );
-      written += readSize;
       skipRest = 0;
+      written += readSize;
       readRest -= readSize;
       if (readRest === 0) {
         break;
@@ -378,11 +387,13 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
 
   public readByte(index: number): number {
     let skipRest = index;
-    for (let pageIndex = 0; true; pageIndex++) {
-      const page = this.getPage(pageIndex, "read");
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "read");
       if (page === null) {
         throw new Error(`Out of range read`);
       }
+      pageInfo = page.nextPageInfo;
       const pageLength = page.buffer.byteLength;
       if (skipRest >= pageLength) {
         skipRest -= pageLength;
@@ -402,11 +413,13 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
 
   public writeByte(index: number, val: number): this {
     let skipRest = index;
-    for (let pageIndex = 0; true; pageIndex++) {
-      const page = this.getPage(pageIndex, "write");
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "write");
       if (page === null) {
         throw new Error(`Out of range read`);
       }
+      pageInfo = page.nextPageInfo;
       const pageLength = page.buffer.byteLength;
       if (skipRest >= pageLength) {
         skipRest -= pageLength;
@@ -421,49 +434,49 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
     return new SelectBufferFacade(this, start, length);
   }
 
-  protected resetComplete() {
-    this.complete = null;
-  }
+  // protected resetComplete() {
+  //   this.complete = null;
+  // }
 
-  private cleanupPage(index: number): void {
-    const page = this.getPage(index, "read");
-    if (page === null) {
-      return;
-    }
-    const nextIndex = index + 1;
-    this.pages.splice(nextIndex, this.pages.length - nextIndex);
-    this.resetComplete();
-    this.deleteNextPage(page.nextPageInfo);
-  }
+  // private cleanupPage(index: number): void {
+  //   const page = this.getPage(index, "read");
+  //   if (page === null) {
+  //     return;
+  //   }
+  //   // const nextIndex = index + 1;
+  //   // this.pages.splice(nextIndex, this.pages.length - nextIndex);
+  //   // this.resetComplete();
+  //   this.deleteNextPage(page.nextPageInfo);
+  // }
 
-  private getPage(
-    index: number,
-    reason: "read" | "write",
-  ): null | IPagedBufferFacadePage<PageInfo> {
-    const cached = this.pages[index];
-    if (cached) {
-      return cached;
-    }
-    if (this.complete) {
-      return null;
-    }
-    const lastPageIndex = this.pages.length - 1;
-    while (this.pages.length <= index) {
-      const pageInfo = lastPageIndex === -1
-        ? this.initialPageInfo
-        : this.pages[lastPageIndex].nextPageInfo;
-      const page = this.getNextPage(pageInfo, reason);
-      if (page === null) {
-        this.complete = {};
-        break;
-      }
-      this.pages.push(page);
-    }
-    if (this.pages[index]) {
-      return this.pages[index];
-    }
-    return null;
-  }
+  // private getPage(
+  //   pageInfo: PageInfo,
+  //   reason: "read" | "write",
+  // ): null | IPagedBufferFacadePage<PageInfo> {
+  //   // const cached = this.pages[index];
+  //   // if (cached) {
+  //   //   return cached;
+  //   // }
+  //   // if (this.complete) {
+  //   //   return null;
+  //   // }
+  //   // const lastPageIndex = this.pages.length - 1;
+  //   while (this.pages.length <= index) {
+  //     const pageInfo = lastPageIndex === -1
+  //       ? this.initialPageInfo
+  //       : this.pages[lastPageIndex].nextPageInfo;
+  //     const page = this.getNextPage(pageInfo, reason);
+  //     if (page === null) {
+  //       this.complete = {};
+  //       break;
+  //     }
+  //     this.pages.push(page);
+  //   }
+  //   if (this.pages[index]) {
+  //     return this.pages[index];
+  //   }
+  //   return null;
+  // }
 
   private writeInternal(
     content: Uint8Array | IBufferFacade,
@@ -474,12 +487,13 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
     let writeRest: Uint8Array = content instanceof Uint8Array
       ? content
       : content[UNSAFE_ACCESS]();
-    let pageIndex = 0;
-    for (pageIndex = 0; true; pageIndex++) {
-      const page = this.getPage(pageIndex, "write");
+    let pageInfo = this.initialPageInfo;
+    while (true) {
+      const page = this.getNextPage(pageInfo, "write");
       if (page === null) {
-        throw new Error(`Out of range read`);
+        throw new Error(`Out of range write`);
       }
+      pageInfo = page.nextPageInfo;
       const pageLength = page.buffer.byteLength;
       if (skipRest >= pageLength) {
         skipRest -= pageLength;
@@ -496,7 +510,7 @@ export class PagedBufferFacade<PageInfo> implements IBufferFacade {
       }
     }
     if (cleanup) {
-      this.cleanupPage(pageIndex);
+      this.deleteNextPage(pageInfo);
     }
     return this;
   }
@@ -524,6 +538,5 @@ export class JoinedBufferFacade extends PagedBufferFacade<number> {
   public add(buffer: IBufferFacade) {
     this.buffers.push(buffer);
     this.totalSize += buffer.byteLength;
-    this.resetComplete();
   }
 }

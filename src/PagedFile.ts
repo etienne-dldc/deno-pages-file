@@ -149,10 +149,22 @@ export class PagedFile {
     return PageType.Entry + type;
   }
 
-  private deleteInternalPage(page: InternalRootPage | InternalEntryPage) {
+  private deleteInternalPage(addr: number, type: number) {
+    const page = this.getInternalRootOrEntry(addr, type);
     this.emptyInternalPage(page);
     this.addAddrToEmptylist(page.addr);
     this.deleteInternalDataPage(page.nextPage);
+  }
+
+  private getInternalRootOrEntry(
+    addr: number,
+    expectedType: number,
+  ): InternalEntryPage | InternalRootPage {
+    return addr === 0 ? this.getInternalRootPage() : this.getInternalEntryPage(
+      addr,
+      expectedType,
+      true,
+    );
   }
 
   private getPageFromCache(addr: number, expectedType: number): Page {
@@ -160,13 +172,7 @@ export class PagedFile {
     if (cached) {
       return cached;
     }
-    const mainPage = addr === 0
-      ? this.getInternalRootPage()
-      : this.getInternalEntryPage(
-        addr,
-        expectedType,
-        true,
-      );
+    const mainPage = this.getInternalRootOrEntry(addr, expectedType);
     const page = this.instantiatePage(mainPage);
     this.pageCache.set(addr, page);
     return page;
@@ -177,14 +183,19 @@ export class PagedFile {
   }
 
   private instantiatePage(page: InternalRootPage | InternalEntryPage): Page {
-    return new Page({
-      getEmptyPageAddr: this.getEmptyPageAddr.bind(this),
-      getInternalDataPage: this.getInternalDataPage.bind(this),
-      onPageClosed: this.onPageClosed.bind(this),
-      deleteInternalPage: this.deleteInternalPage.bind(this),
-      deleteInternalDataPage: this.deleteInternalDataPage.bind(this),
-      checkCache: this.checkCache.bind(this),
-    }, page);
+    return new Page(
+      {
+        getEmptyPageAddr: this.getEmptyPageAddr.bind(this),
+        getInternalDataPage: this.getInternalDataPage.bind(this),
+        onPageClosed: this.onPageClosed.bind(this),
+        deleteInternalPage: this.deleteInternalPage.bind(this),
+        deleteInternalDataPage: this.deleteInternalDataPage.bind(this),
+        getInternalRootOrEntry: this.getInternalRootOrEntry.bind(this),
+        checkCache: this.checkCache.bind(this),
+      },
+      page.addr,
+      page.type,
+    );
   }
 
   private checkCache() {

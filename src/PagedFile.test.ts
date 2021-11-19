@@ -165,3 +165,33 @@ Deno.test("Create page custom type", () => {
   file2.close();
   Deno.removeSync(path);
 });
+
+Deno.test("Can read / wripe page even if cache is clean", () => {
+  const path = resolve(
+    Deno.cwd(),
+    "src",
+    "fixture",
+    Math.floor(Math.random() * 100000) + ".db",
+  );
+  const file = new PagedFile(path, { pageSize: 256, cacheSize: 0 });
+  const page = file.createPage();
+  file.save();
+  assertEquals(file.debug(), [
+    "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
+    "001: Entry(4) [nextPage: 0]",
+  ]);
+  const content = new Uint8Array(300);
+  content.set(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), 0);
+  page.write(content);
+  file.save();
+  assertEquals(
+    page.read(0, 10),
+    new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+  );
+  assertEquals(file.debug(), [
+    "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
+    "001: Entry(4) [nextPage: 2]",
+    "002: Data [prevPage: 0, nextPage: 0]",
+  ]);
+  file.close();
+});
