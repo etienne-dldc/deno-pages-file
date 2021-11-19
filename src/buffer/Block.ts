@@ -8,6 +8,10 @@ export const Block = {
   uint16: { read: ReadBlock.uint16, write: WriteBlock.uint16 },
   uint32: { read: ReadBlock.uint32, write: WriteBlock.uint32 },
   float64: { read: ReadBlock.float64, write: WriteBlock.float64 },
+  encodedBoolean: {
+    read: ReadBlock.encodedBoolean,
+    write: WriteBlock.encodedBoolean,
+  },
   encodedUint: { read: ReadBlock.encodedUint, write: WriteBlock.encodedUint },
   encodedString: {
     read: ReadBlock.encodedString,

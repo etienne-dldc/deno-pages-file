@@ -67,6 +67,8 @@ export const WriteBlock = (() => {
     };
   }
 
+  const encodedBoolean = transformFixed(uint8, (val) => Number(val));
+
   const encodedUintSize = (val: number) => {
     return val < 254
       ? uint8.size
@@ -229,6 +231,7 @@ export const WriteBlock = (() => {
     uint8,
     encodedUint,
     encodedString,
+    encodedBoolean,
     string,
     buffer,
     bufferFixed,

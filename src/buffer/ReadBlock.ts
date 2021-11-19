@@ -49,6 +49,11 @@ export const ReadBlock = (() => {
     };
   }
 
+  const encodedBoolean: IReadBlockFixed<boolean> = transformFixed(
+    uint8,
+    (v) => v > 0,
+  );
+
   const encodedUint: IReadBlockVariable<number> = {
     size(buf, pos) {
       const val = uint8.read(buf, pos);
@@ -129,6 +134,16 @@ export const ReadBlock = (() => {
         });
         return result;
       },
+    };
+  }
+
+  function transformFixed<Inner, Outer>(
+    block: IReadBlockFixed<Inner>,
+    transform: (val: Inner) => Outer,
+  ): IReadBlockFixed<Outer> {
+    return {
+      size: block.size,
+      read: (buf, pos) => transform(block.read(buf, pos)),
     };
   }
 
@@ -240,12 +255,14 @@ export const ReadBlock = (() => {
     uint8,
     encodedUint,
     encodedString,
+    encodedBoolean,
     fixedString,
     bufferFixed,
     // utils
     seq,
     inject,
     transform,
+    transformFixed,
     dynamic,
     repeat,
     resolveSize,
