@@ -30,6 +30,10 @@ export class Page implements IBufferFacade {
   private readonly parent: ParentRef;
   private readonly internalType: number;
   private readonly contentFacade: PagedBufferFacade<PageInfo>;
+  private readonly internalPageCache = new Map<
+    number | null,
+    InternalDataPage | InternalRootPage | InternalEntryPage
+  >();
 
   private isClosed = false;
 
@@ -46,22 +50,19 @@ export class Page implements IBufferFacade {
       // getNextPage
       (prevPage, mode) => {
         if (prevPage === null) {
-          const mainPage = this.parent.getInternalRootOrEntry(
-            this.addr,
-            this.internalType,
-          );
+          const mainPage = this.getPage(null, true);
           return { buffer: mainPage.contentFacade, nextPageInfo: mainPage };
         }
         const addr = prevPage.nextPage;
         if (addr !== 0) {
-          const page = parent.getInternalDataPage(addr, true);
+          const page = this.getPage(addr, true);
           return { buffer: page.contentFacade, nextPageInfo: page };
         }
         // addr is 0 meaning prev page does not have nextPage
         if (mode === "write") {
           // create new page
           const newPageAddr = parent.getEmptyPageAddr();
-          const page = parent.getInternalDataPage(newPageAddr, false);
+          const page = this.getPage(newPageAddr, false);
           prevPage.nextPage = newPageAddr;
           return { buffer: page.contentFacade, nextPageInfo: page };
         }
@@ -174,5 +175,26 @@ export class Page implements IBufferFacade {
     }
     this.parent.deleteInternalPage(this.addr, this.internalType);
     this.close();
+  }
+
+  private getPage(
+    addr: number | null,
+    mustExists: boolean,
+  ): InternalDataPage | InternalRootPage | InternalEntryPage {
+    const cached = this.internalPageCache.get(addr);
+    if (cached && cached.closed === false) {
+      return cached;
+    }
+    if (addr === null) {
+      const internalPage = this.parent.getInternalRootOrEntry(
+        this.addr,
+        this.internalType,
+      );
+      this.internalPageCache.set(addr, internalPage);
+      return internalPage;
+    }
+    const internalPage = this.parent.getInternalDataPage(addr, mustExists);
+    this.internalPageCache.set(addr, internalPage);
+    return internalPage;
   }
 }

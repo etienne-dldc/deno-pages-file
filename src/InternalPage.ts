@@ -26,7 +26,7 @@ export class RawInternalPage {
 
   private readonly dirtyManager: DirtyManager;
   private readonly fullFacade: TrackedBufferFacade;
-  private isDeleted = false;
+  private isClosed = false;
 
   constructor(
     pageSize: number,
@@ -50,20 +50,20 @@ export class RawInternalPage {
     return this.dirtyManager.dirty;
   }
 
-  public get deleted(): boolean {
-    return this.isDeleted;
+  public get closed(): boolean {
+    return this.isClosed;
   }
 
-  public markDeleted() {
-    if (this.isDeleted) {
+  public close() {
+    if (this.isClosed) {
       return;
     }
-    this.isDeleted = true;
+    this.isClosed = true;
   }
 
   public writeTo(file: Deno.File) {
-    if (this.isDeleted) {
-      throw new Error(`Cannot write deleted page`);
+    if (this.isClosed) {
+      throw new Error(`Cannot write closed page`);
     }
     if (this.dirtyManager.dirty === false) {
       return;
@@ -101,12 +101,12 @@ export class InternalPage {
     return this.parent.dirty;
   }
 
-  public get deleted(): boolean {
-    return this.parent.deleted;
+  public get closed(): boolean {
+    return this.parent.closed;
   }
 
-  public markDeleted() {
-    this.parent.markDeleted();
+  public close() {
+    this.parent.close();
   }
 
   public writeTo(file: Deno.File): void {

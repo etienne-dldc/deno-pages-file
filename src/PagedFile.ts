@@ -30,7 +30,7 @@ export class PagedFile {
 
   private readonly file: Deno.File;
   private readonly cache = new LeastRecentlyUsedMap<number, InternalPage>();
-  private readonly pageCache = new Map<number, Page>();
+  private pageCache = new Map<number, Page>();
 
   private isClosed = false;
   private filePageCount: number; // Number of pages in the document (written on file)
@@ -86,11 +86,11 @@ export class PagedFile {
     return this.getPageFromCache(0, PageType.Root);
   }
 
-  public getPage(addr: number, expectedType: number = PageType.Entry): Page {
+  public getPage(addr: number, pageType = 0): Page {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
-    return this.getPageFromCache(addr, this.offsetEntryPageType(expectedType));
+    return this.getPageFromCache(addr, this.offsetEntryPageType(pageType));
   }
 
   public createPage(pageType = 0): Page {
@@ -115,6 +115,17 @@ export class PagedFile {
       return;
     }
     this.getPageFromCache(addr, this.offsetEntryPageType(pageType)).delete();
+  }
+
+  public getOpenPages(): Array<Page> {
+    return Array.from(this.pageCache.values());
+  }
+
+  public closeAllPages() {
+    this.pageCache.forEach((page) => {
+      page.close();
+    });
+    this.pageCache = new Map<number, Page>();
   }
 
   public save() {
@@ -206,6 +217,7 @@ export class PagedFile {
     this.cache.traverseFromOldest((page) => {
       if (page.dirty === false) {
         deleteCount--;
+        page.close();
         this.cache.delete(page.addr);
         if (deleteCount <= 0) {
           // stop the loop
@@ -269,7 +281,7 @@ export class PagedFile {
   }
 
   private emptyInternalPage(page: InternalPage) {
-    page.markDeleted();
+    page.close();
     this.cache.set(page.addr, new InternalEmptyPage(this.pageSize, page.addr));
   }
 
