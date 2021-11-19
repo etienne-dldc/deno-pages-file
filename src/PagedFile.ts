@@ -84,23 +84,23 @@ export class PagedFile {
     return this.getPageFromCache(0, InternalPageType.Root);
   }
 
-  public getPage(addr: number, pageType = 0): Page {
+  public getPage(addr: number, pageType: number | null = 0): Page {
     if (this.isClosed) {
       throw new Error(`Cannot read closed file`);
     }
     return this.getPageFromCache(
       addr,
-      entryPageTypeToInternalPageType(pageType),
+      pageType === null ? null : entryPageTypeToInternalPageType(pageType),
     );
   }
 
-  public createPage(pageType = 0): Page {
+  public createPage(pageType: number | null = 0): Page {
     if (this.isClosed) {
       throw new Error(`Cannot write closed file`);
     }
     const mainPage = this.getInternalEntryPage(
       this.getEmptyPageAddr(),
-      entryPageTypeToInternalPageType(pageType),
+      pageType === null ? null : entryPageTypeToInternalPageType(pageType),
       false,
     );
     const page = this.instantiatePage(mainPage);
@@ -108,15 +108,18 @@ export class PagedFile {
     return page;
   }
 
-  public deletePage(addr: number, pageType = 0) {
+  public deletePage(addr: number, pageType: number | null = 0) {
     if (this.isClosed) {
       throw new Error(`Cannot delete page on closed file`);
     }
     if (addr === 0) {
       return;
     }
-    this.getPageFromCache(addr, entryPageTypeToInternalPageType(pageType))
-      .delete();
+    const page = this.getPageFromCache(
+      addr,
+      pageType === null ? null : entryPageTypeToInternalPageType(pageType),
+    );
+    page.delete();
   }
 
   public getOpenPages(): Array<Page> {
@@ -159,7 +162,7 @@ export class PagedFile {
 
   private getInternalRootOrEntry(
     addr: number,
-    expectedType: number,
+    expectedType: number | null,
   ): InternalEntryPage | InternalRootPage {
     return addr === 0 ? this.getInternalRootPage() : this.getInternalEntryPage(
       addr,
@@ -168,7 +171,7 @@ export class PagedFile {
     );
   }
 
-  private getPageFromCache(addr: number, expectedType: number): Page {
+  private getPageFromCache(addr: number, expectedType: number | null): Page {
     const cached = this.pageCache.get(addr);
     if (cached) {
       return cached;
@@ -300,13 +303,29 @@ export class PagedFile {
   // deno-fmt-ignore
   private ensureInternalPageType(page: InternalPage, type: InternalPageType.Data): InternalDataPage;
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: number): InternalEntryPage;
+  private ensureInternalPageType(page: InternalPage, type: number | null): InternalEntryPage;
   // deno-fmt-ignore
-  private ensureInternalPageType(page: InternalPage, type: InternalPageType): InternalPage {
-    if (page.type !== type) {
-      throw new Error(`Page type mismatch`);
-    }
+  private ensureInternalPageType(page: InternalPage, type: InternalPageType | null): InternalPage {
+    this.ensureTypeMatch(page.addr, type, page.type)
     return page;
+  }
+
+  // check if type is what we expect
+  private ensureTypeMatch(
+    addr: number,
+    expectedType: InternalPageType | null,
+    actualType: number,
+  ): void {
+    const match = expectedType === null
+      ? actualType >= InternalPageType.Entry
+      : actualType === expectedType;
+    if (!match) {
+      throw new Error(
+        `Page type mismatch at ${addr}: Expecting ${
+          expectedType ?? `>= ${InternalPageType.Entry}`
+        } received ${actualType}`,
+      );
+    }
   }
 
   private getInternalRootPage(): InternalRootPage {
@@ -318,7 +337,7 @@ export class PagedFile {
 
   private getInternalEntryPage(
     addr: number,
-    expectedType: number,
+    expectedType: number | null,
     mustExist: boolean,
   ): InternalEntryPage {
     return this.ensureInternalPageType(
@@ -356,24 +375,20 @@ export class PagedFile {
 
   private getInternalPage(
     pageAddr: number,
-    expectedType: number,
+    expectedType: number | null,
     mustExist: boolean,
   ): InternalPage {
     const cached = this.cache.get(pageAddr);
-    const isEmpty = Boolean(cached && cached.type !== InternalPageType.Empty);
     if (cached) {
       if (cached.type === InternalPageType.Empty) {
         const buffer = new Uint8Array(this.pageSize);
-        buffer[0] = expectedType;
+        const typeResolved = expectedType ?? InternalPageType.Entry;
+        buffer[0] = typeResolved;
         const page = this.instantiateInternalPage(pageAddr, buffer, true);
         this.cache.set(pageAddr, page);
         return page;
       }
-      if (cached.type !== expectedType) {
-        throw new Error(
-          `Page type mismatch at ${pageAddr}: Expecting ${expectedType} received ${cached.type}`,
-        );
-      }
+      this.ensureTypeMatch(pageAddr, expectedType, cached.type);
       return cached;
     }
     const [buffer, isNew] = this.getPageBuffer(
@@ -384,7 +399,7 @@ export class PagedFile {
     const page = this.instantiateInternalPage(
       pageAddr,
       buffer,
-      isNew || isEmpty,
+      isNew,
     );
     this.cache.set(pageAddr, page);
     return page;
@@ -423,7 +438,7 @@ export class PagedFile {
    */
   private getPageBuffer(
     pageAddr: number,
-    expectedType: number,
+    expectedType: number | null,
     mustExist: boolean,
   ): [buffer: Uint8Array, isNew: boolean] {
     const isOnFile = pageAddr < this.filePageCount;
@@ -438,20 +453,15 @@ export class PagedFile {
       const buffer = this.readPageBuffer(pageAddr);
       if (buffer[0] === InternalPageType.Empty) {
         // if page is empty => change type (empty page buffer is empty so we can reuse it)
-        buffer[0] = expectedType;
+        buffer[0] = expectedType ?? InternalPageType.Entry;
         return [buffer, true];
       }
-      if (buffer[0] !== expectedType) {
-        throw new Error(
-          `Page type mismatch at addr ${pageAddr}: Expecting ${expectedType} received ${
-            buffer[0]
-          }`,
-        );
-      }
+      this.ensureTypeMatch(pageAddr, expectedType, buffer[0]);
       return [buffer, false];
     }
+    // create new buffer
     const buffer = new Uint8Array(this.pageSize);
-    buffer[0] = expectedType;
+    buffer[0] = expectedType ?? InternalPageType.Entry;
     return [buffer, true];
   }
 
