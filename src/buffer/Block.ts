@@ -1,4 +1,5 @@
 import { ReadBlock } from "./ReadBlock.ts";
+import { IBlock } from "./types.d.ts";
 import { WriteBlock } from "./WriteBlock.ts";
 
 const encoder = new TextEncoder();
@@ -16,6 +17,12 @@ export const Block = {
   encodedString: {
     read: ReadBlock.encodedString,
     write: WriteBlock.encodedString,
+  },
+  arrayOf<R, W>(itemBlock: IBlock<R, W>): IBlock<Array<R>, Array<W>> {
+    return {
+      read: ReadBlock.arrayOf(itemBlock.read),
+      write: WriteBlock.arrayOf(itemBlock.write),
+    };
   },
   staticString(str: string) {
     const buf = encoder.encode(str);

@@ -58,6 +58,13 @@ export const WriteBlock = (() => {
     },
   };
 
+  function arrayOf<T>(itemBlock: IWriteBlock<T>): IWriteBlock<Array<T>> {
+    return transform(
+      seq(uint16, many(itemBlock)),
+      (arr): [number, Array<T>] => [arr.length, arr],
+    );
+  }
+
   function bufferFixed(len: number): IWriteBlockFixed<Uint8Array> {
     return {
       size: len,
@@ -237,6 +244,7 @@ export const WriteBlock = (() => {
     encodedBoolean,
     string,
     buffer,
+    arrayOf,
     bufferFixed,
     // utils
     seq,

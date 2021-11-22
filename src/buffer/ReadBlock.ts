@@ -84,6 +84,16 @@ export const ReadBlock = (() => {
     };
   }
 
+  function arrayOf<T>(itemBlock: IReadBlock<T>): IReadBlock<Array<T>> {
+    return dynamic((buf, pos) => {
+      const length = uint16.read(buf, pos);
+      return transform(
+        seq(uint16, repeat(length, itemBlock)),
+        ([_len, items]) => items,
+      );
+    });
+  }
+
   const encodedString: IReadBlockVariable<string> = {
     size(buf, pos) {
       const len = encodedUint.read(buf, pos);
@@ -256,6 +266,7 @@ export const ReadBlock = (() => {
     encodedUint,
     encodedString,
     encodedBoolean,
+    arrayOf,
     fixedString,
     bufferFixed,
     // utils
