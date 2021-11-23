@@ -18,12 +18,13 @@ export enum PageBlockType {
   Entry = 4,
 }
 
-export class RawPageBlock {
-  public internalType: PageBlockType | number;
+export class PageBlock {
   public readonly pageSize: number;
   public readonly addr: number;
-  public readonly contentFacade: IBufferFacade;
 
+  protected readonly contentFacade: IBufferFacade;
+
+  private pageBlockType: PageBlockType | number;
   private isClosed = false;
   private readonly dirtyManager: DirtyManager;
   private readonly fullFacade: TrackedBufferFacade;
@@ -37,7 +38,7 @@ export class RawPageBlock {
   ) {
     this.pageSize = pageSize;
     this.addr = addr;
-    this.internalType = type;
+    this.pageBlockType = type;
     this.dirtyManager = new DirtyManager(isDirty);
     this.fullFacade = new TrackedBufferFacade(
       new SimpleBufferFacade(buffer),
@@ -47,18 +48,7 @@ export class RawPageBlock {
   }
 
   public get type(): number {
-    return this.internalType;
-  }
-
-  public set type(newType: number) {
-    if (
-      this.internalType < PageBlockType.Entry ||
-      newType < PageBlockType.Entry
-    ) {
-      throw new Error(`Only entry type are allowed to change`);
-    }
-    this.internalType = newType;
-    this.fullFacade.writeByte(0, newType);
+    return this.pageBlockType;
   }
 
   public get dirty(): boolean {
@@ -96,52 +86,23 @@ export class RawPageBlock {
     }
     this.dirtyManager.markClean();
   }
-}
 
-export class PageBlock {
-  public readonly pageSize: number;
-  public readonly addr: number;
-
-  protected readonly parent: RawPageBlock;
-
-  constructor(parent: RawPageBlock) {
-    this.parent = parent;
-    this.pageSize = parent.pageSize;
-    this.addr = parent.addr;
-  }
-
-  public get type(): number {
-    return this.parent.type;
-  }
-
-  public get dirty(): boolean {
-    return this.parent.dirty;
-  }
-
-  public get closed(): boolean {
-    return this.parent.closed;
-  }
-
-  public close() {
-    this.parent.close();
-  }
-
-  public writeTo(file: Deno.File): void {
-    this.parent.writeTo(file);
+  protected setType(newType: number) {
+    if (
+      this.pageBlockType < PageBlockType.Entry ||
+      newType < PageBlockType.Entry
+    ) {
+      throw new Error(`Only entry type are allowed to change`);
+    }
+    this.pageBlockType = newType;
+    this.fullFacade.writeByte(0, newType);
   }
 }
 
 export class EmptyPageBlock extends PageBlock {
   constructor(pageSize: number, addr: number) {
     const buffer = new Uint8Array(pageSize); // buffer[0] is 0 which correspond to PageType.Empty
-    const parent = new RawPageBlock(
-      pageSize,
-      addr,
-      buffer,
-      PageBlockType.Empty,
-      true,
-    );
-    super(parent);
+    super(pageSize, addr, buffer, PageBlockType.Empty, true);
   }
 }
 
@@ -156,17 +117,21 @@ export class RootPageBlock extends PageBlock {
 
   private readonly blocks: FixedBlockList<typeof ROOT_HEADER>;
 
-  constructor(parent: RawPageBlock, isNew: boolean) {
-    super(parent);
-    this.blocks = new FixedBlockList(ROOT_HEADER, parent.contentFacade);
+  constructor(
+    pageSize: number,
+    buffer: Uint8Array,
+    isDirty: boolean,
+  ) {
+    super(pageSize, 0, buffer, PageBlockType.Root, isDirty);
+    this.blocks = new FixedBlockList(ROOT_HEADER, super.contentFacade);
     this.contentFacade = this.blocks.selectRest();
-    if (isNew) {
-      this.blocks.write("pageSize", parent.pageSize);
+    if (isDirty) {
+      this.blocks.write("pageSize", pageSize);
     } else {
       const storedPageSize = this.blocks.read("pageSize");
-      if (parent.pageSize !== storedPageSize) {
+      if (pageSize !== storedPageSize) {
         throw new Error(
-          `Page size mismatch ${parent.pageSize} === ${storedPageSize}`,
+          `Page size mismatch ${pageSize} === ${storedPageSize}`,
         );
       }
     }
@@ -198,14 +163,19 @@ const EMPTYLIST_HEADER_BLOCKS = [
 export class EmptylistPageBlock extends PageBlock {
   public readonly capacity: number;
 
-  private readonly blocks: FixedBlockList<typeof EMPTYLIST_HEADER_BLOCKS>;
-  private readonly contentFacade: IBufferFacade;
+  protected readonly blocks: FixedBlockList<typeof EMPTYLIST_HEADER_BLOCKS>;
+  protected readonly contentFacade: IBufferFacade;
 
-  constructor(parent: RawPageBlock) {
-    super(parent);
+  constructor(
+    pageSize: number,
+    addr: number,
+    buffer: Uint8Array,
+    isDirty: boolean,
+  ) {
+    super(pageSize, addr, buffer, PageBlockType.Emptylist, isDirty);
     this.blocks = new FixedBlockList(
       EMPTYLIST_HEADER_BLOCKS,
-      parent.contentFacade,
+      super.contentFacade,
     );
     this.capacity = Math.floor(this.blocks.restLength / ReadBlock.uint16.size); // 2 byte per addrs
     this.contentFacade = this.blocks.selectRest();
@@ -282,9 +252,14 @@ export class DataPageBlock extends PageBlock {
 
   private readonly blocks: FixedBlockList<typeof DATA_HEADER_BLOCKS>;
 
-  constructor(parent: RawPageBlock) {
-    super(parent);
-    this.blocks = new FixedBlockList(DATA_HEADER_BLOCKS, parent.contentFacade);
+  constructor(
+    pageSize: number,
+    addr: number,
+    buffer: Uint8Array,
+    isDirty: boolean,
+  ) {
+    super(pageSize, addr, buffer, PageBlockType.Data, isDirty);
+    this.blocks = new FixedBlockList(DATA_HEADER_BLOCKS, super.contentFacade);
     this.contentFacade = this.blocks.selectRest();
   }
 
@@ -315,21 +290,23 @@ export class EntryPageBlock extends PageBlock {
 
   private readonly blocks: FixedBlockList<typeof ENTRY_HEADER_BLOCKS>;
 
-  constructor(parent: RawPageBlock) {
-    if (parent.type < PageBlockType.Entry) {
+  constructor(
+    pageSize: number,
+    addr: number,
+    buffer: Uint8Array,
+    type: PageBlockType,
+    isDirty: boolean,
+  ) {
+    if (type < PageBlockType.Entry) {
       throw new Error(`Invalid page type`);
     }
-    super(parent);
-    this.blocks = new FixedBlockList(ENTRY_HEADER_BLOCKS, parent.contentFacade);
+    super(pageSize, addr, buffer, type, isDirty);
+    this.blocks = new FixedBlockList(ENTRY_HEADER_BLOCKS, super.contentFacade);
     this.contentFacade = this.blocks.selectRest();
   }
 
-  public get type(): number {
-    return this.parent.type;
-  }
-
   public set type(newType: number) {
-    this.parent.type = newType;
+    this.setType(newType);
   }
 
   public get nextPage() {

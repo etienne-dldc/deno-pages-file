@@ -6,7 +6,6 @@ import {
   EntryPageBlock,
   PageBlock,
   PageBlockType,
-  RawPageBlock,
   RootPageBlock,
 } from "./PageBlock.ts";
 import {
@@ -92,7 +91,8 @@ export class PagedFile implements IPageManager {
   public createManager(): PageManager {
     return new PageManager({
       deletePage: this.deletePage.bind(this),
-      closeAllPagesForManager: this.closeAllPagesForManager.bind(this),
+      releaseAllPagesForManager: this.releaseAllPagesForManager.bind(this),
+      releasePageForManager: this.releasePageForManager.bind(this),
       createPageForManager: this.createPageForManager.bind(this),
       getOpenPagesForManager: this.getOpenPagesForManager.bind(this),
       getPageForManager: this.getPageForManager.bind(this),
@@ -130,16 +130,30 @@ export class PagedFile implements IPageManager {
     page.delete();
   }
 
-  // public deletePage(addr: number, pageType: number | null = null) {
-  //   return this.deletePageForManager(this.mainManager, addr, pageType);
-  // }
-
   public getOpenPages(): Array<Page> {
     return this.getOpenPagesForManager(this.mainManager);
   }
 
-  public closeAllPages() {
-    return this.closeAllPagesForManager(this.mainManager);
+  public releasePage(page: number | Page) {
+    return this.releasePageForManager(this.mainManager, page);
+  }
+
+  public forceReleasePage(page: number | Page) {
+    const addr = page instanceof Page ? page.addr : page;
+    const cached = this.pageCache.get(addr);
+    if (cached) {
+      cached.managers.clear();
+    }
+  }
+
+  public releaseAllPages() {
+    return this.releaseAllPagesForManager(this.mainManager);
+  }
+
+  public forceReleaseAllPages() {
+    for (const [_addr, { managers }] of this.pageCache) {
+      managers.clear();
+    }
   }
 
   public save() {
@@ -217,14 +231,20 @@ export class PagedFile implements IPageManager {
     return pages;
   }
 
-  private closeAllPagesForManager(manager: PageManager) {
-    for (const [addr, { page, managers }] of this.pageCache) {
+  private releasePageForManager(manager: PageManager, page: number | Page) {
+    const addr = page instanceof Page ? page.addr : page;
+    const cached = this.pageCache.get(addr);
+    if (cached) {
+      if (cached.managers.has(manager)) {
+        cached.managers.delete(manager);
+      }
+    }
+  }
+
+  private releaseAllPagesForManager(manager: PageManager) {
+    for (const [_addr, { managers }] of this.pageCache) {
       if (managers.has(manager)) {
         managers.delete(manager);
-        if (managers.size === 0) {
-          page[PAGE_INTERNAL_CLOSE]();
-          this.pageCache.delete(addr);
-        }
       }
     }
   }
@@ -295,6 +315,11 @@ export class PagedFile implements IPageManager {
   }
 
   private checkCache() {
+    this.checkBlockCache();
+    this.checkPageCache();
+  }
+
+  private checkBlockCache() {
     if (this.blockCache.size <= this.cacheSize) {
       return;
     }
@@ -310,6 +335,15 @@ export class PagedFile implements IPageManager {
         }
       }
     });
+  }
+
+  private checkPageCache() {
+    for (const [addr, { managers, page }] of this.pageCache) {
+      if (managers.size === 0) {
+        this.pageCache.delete(addr);
+        page[PAGE_INTERNAL_CLOSE]();
+      }
+    }
   }
 
   private getLastEmptylistPage(): EmptylistPageBlock | null {
@@ -506,26 +540,19 @@ export class PagedFile implements IPageManager {
     isNew: boolean,
   ): PageBlock {
     const type: PageBlockType = buffer[0];
-    const basePage = new RawPageBlock(
-      this.pageSize,
-      pageAddr,
-      buffer,
-      type,
-      isNew,
-    );
     if (type === PageBlockType.Empty) {
       throw new Error(`Cannot instantiate empty pagbe`);
     }
     if (type === PageBlockType.Root) {
-      return new RootPageBlock(basePage, isNew);
+      return new RootPageBlock(this.pageSize, buffer, isNew);
     }
     if (type === PageBlockType.Emptylist) {
-      return new EmptylistPageBlock(basePage);
+      return new EmptylistPageBlock(this.pageSize, pageAddr, buffer, isNew);
     }
     if (type === PageBlockType.Data) {
-      return new DataPageBlock(basePage);
+      return new DataPageBlock(this.pageSize, pageAddr, buffer, isNew);
     }
-    return new EntryPageBlock(basePage);
+    return new EntryPageBlock(this.pageSize, pageAddr, buffer, type, isNew);
   }
 
   /**
@@ -639,22 +666,22 @@ function pageBufferToString(
   pageSize: number,
 ): string {
   const type = buffer[0];
-  const basePage = new RawPageBlock(pageSize, addr, buffer, type, false);
+  // const basePage = new RawPageBlock(pageSize, addr, buffer, type, false);
   if (type === PageBlockType.Empty) {
     return (`${("000" + addr).slice(-3)}: Empty`);
   }
   if (type === PageBlockType.Root) {
-    const page = new RootPageBlock(basePage, false);
+    const page = new RootPageBlock(pageSize, buffer, false);
     return PageBlockToString(page);
   }
   if (type === PageBlockType.Emptylist) {
-    const page = new EmptylistPageBlock(basePage);
+    const page = new EmptylistPageBlock(pageSize, addr, buffer, false);
     return PageBlockToString(page);
   }
   if (type === PageBlockType.Data) {
-    const page = new DataPageBlock(basePage);
+    const page = new DataPageBlock(pageSize, addr, buffer, false);
     return PageBlockToString(page);
   }
-  const page = new EntryPageBlock(basePage);
+  const page = new EntryPageBlock(pageSize, addr, buffer, type, false);
   return PageBlockToString(page);
 }

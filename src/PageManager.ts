@@ -7,16 +7,18 @@ export interface IPageManager {
   createPage(pageType?: number | null): Page;
   deletePage(addr: number, pageType?: number | null): void;
   getOpenPages(): Array<Page>;
-  closeAllPages(): void;
+  releaseAllPages(): void;
+  releasePage(page: number | Page): void;
 }
 
 type ParentRef = {
+  deletePage: PagedFile["deletePage"];
   getRootPageForManager: PagedFile["getRootPageForManager"];
   getPageForManager: PagedFile["getPageForManager"];
   createPageForManager: PagedFile["createPageForManager"];
-  deletePage: PagedFile["deletePage"];
   getOpenPagesForManager: PagedFile["getOpenPagesForManager"];
-  closeAllPagesForManager: PagedFile["closeAllPagesForManager"];
+  releaseAllPagesForManager: PagedFile["releaseAllPagesForManager"];
+  releasePageForManager: PagedFile["releasePageForManager"];
 };
 
 export class PageManager implements IPageManager {
@@ -46,7 +48,11 @@ export class PageManager implements IPageManager {
     return this.parent.getOpenPagesForManager(this);
   }
 
-  public closeAllPages() {
-    return this.parent.closeAllPagesForManager(this);
+  public releasePage(page: number | Page) {
+    return this.parent.releasePageForManager(this, page);
+  }
+
+  public releaseAllPages() {
+    return this.parent.releaseAllPagesForManager(this);
   }
 }
