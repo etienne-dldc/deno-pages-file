@@ -22,7 +22,8 @@ export class PageBlock {
   public readonly pageSize: number;
   public readonly addr: number;
 
-  protected readonly contentFacade: IBufferFacade;
+  // facade without type byte
+  protected readonly pageBlockFacade: IBufferFacade;
 
   private pageBlockType: PageBlockType | number;
   private isClosed = false;
@@ -44,7 +45,7 @@ export class PageBlock {
       new SimpleBufferFacade(buffer),
       this.dirtyManager,
     );
-    this.contentFacade = this.fullFacade.select(1); // skip page type byte
+    this.pageBlockFacade = this.fullFacade.select(1); // skip page type byte
   }
 
   public get type(): number {
@@ -87,6 +88,10 @@ export class PageBlock {
     this.dirtyManager.markClean();
   }
 
+  protected getType() {
+    return this.pageBlockType;
+  }
+
   protected setType(newType: number) {
     if (
       this.pageBlockType < PageBlockType.Entry ||
@@ -123,7 +128,7 @@ export class RootPageBlock extends PageBlock {
     isDirty: boolean,
   ) {
     super(pageSize, 0, buffer, PageBlockType.Root, isDirty);
-    this.blocks = new FixedBlockList(ROOT_HEADER, super.contentFacade);
+    this.blocks = new FixedBlockList(ROOT_HEADER, this.pageBlockFacade);
     this.contentFacade = this.blocks.selectRest();
     if (isDirty) {
       this.blocks.write("pageSize", pageSize);
@@ -175,7 +180,7 @@ export class EmptylistPageBlock extends PageBlock {
     super(pageSize, addr, buffer, PageBlockType.Emptylist, isDirty);
     this.blocks = new FixedBlockList(
       EMPTYLIST_HEADER_BLOCKS,
-      super.contentFacade,
+      this.pageBlockFacade,
     );
     this.capacity = Math.floor(this.blocks.restLength / ReadBlock.uint16.size); // 2 byte per addrs
     this.contentFacade = this.blocks.selectRest();
@@ -259,7 +264,7 @@ export class DataPageBlock extends PageBlock {
     isDirty: boolean,
   ) {
     super(pageSize, addr, buffer, PageBlockType.Data, isDirty);
-    this.blocks = new FixedBlockList(DATA_HEADER_BLOCKS, super.contentFacade);
+    this.blocks = new FixedBlockList(DATA_HEADER_BLOCKS, this.pageBlockFacade);
     this.contentFacade = this.blocks.selectRest();
   }
 
@@ -301,8 +306,12 @@ export class EntryPageBlock extends PageBlock {
       throw new Error(`Invalid page type`);
     }
     super(pageSize, addr, buffer, type, isDirty);
-    this.blocks = new FixedBlockList(ENTRY_HEADER_BLOCKS, super.contentFacade);
+    this.blocks = new FixedBlockList(ENTRY_HEADER_BLOCKS, this.pageBlockFacade);
     this.contentFacade = this.blocks.selectRest();
+  }
+
+  public get type() {
+    return this.getType();
   }
 
   public set type(newType: number) {

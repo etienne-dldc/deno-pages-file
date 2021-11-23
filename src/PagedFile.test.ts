@@ -9,11 +9,21 @@ function _toHexString(data: Uint8Array): string {
   return decoder.decode(encode(data));
 }
 
+const fixtureFolder = resolve(
+  Deno.cwd(),
+  "src",
+  "fixture",
+);
+
+try {
+  Deno.mkdirSync(fixtureFolder);
+} catch {
+  //
+}
+
 Deno.test("Create file", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path);
@@ -25,9 +35,7 @@ Deno.test("Create file", () => {
 
 Deno.test("Create root in file", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -42,9 +50,7 @@ Deno.test("Create root in file", () => {
 
 Deno.test("Write root", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -63,9 +69,7 @@ Deno.test("Write root", () => {
 
 Deno.test("Write root without saving", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -81,9 +85,7 @@ Deno.test("Write root without saving", () => {
 
 Deno.test("Write root multi pages", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -99,9 +101,7 @@ Deno.test("Write root multi pages", () => {
 
 Deno.test("Write root multi pages at index", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -116,32 +116,31 @@ Deno.test("Write root multi pages at index", () => {
   Deno.removeSync(path);
 });
 
-Deno.test("Create page", () => {
-  const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
-    Math.floor(Math.random() * 100000) + ".db",
-  );
-  const file = new PagedFile(path, { pageSize: 256 });
-  const page = file.createPage();
-  page.write(new Uint8Array(300), 260);
-  file.save();
-  assertEquals(file.debug(), [
-    "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
-    "001: Entry(4) [nextPage: 2]",
-    "002: Data [prevPage: 0, nextPage: 3]",
-    "003: Data [prevPage: 0, nextPage: 0]",
-  ]);
-  file.close();
-  Deno.removeSync(path);
+Deno.test({
+  name: "Create page",
+  fn: () => {
+    const path = resolve(
+      fixtureFolder,
+      Math.floor(Math.random() * 100000) + ".db",
+    );
+    const file = new PagedFile(path, { pageSize: 256 });
+    const page = file.createPage();
+    page.write(new Uint8Array(300), 260);
+    file.save();
+    assertEquals(file.debug(), [
+      "000: Root [pageSize: 256, emptylistAddr: 0, nextPage: 0]",
+      "001: Entry(4) [nextPage: 2]",
+      "002: Data [prevPage: 0, nextPage: 3]",
+      "003: Data [prevPage: 0, nextPage: 0]",
+    ]);
+    file.close();
+    Deno.removeSync(path);
+  },
 });
 
 Deno.test("Create page custom type", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256 });
@@ -168,9 +167,7 @@ Deno.test("Create page custom type", () => {
 
 Deno.test("Can read / wripe page even if cache is clean", () => {
   const path = resolve(
-    Deno.cwd(),
-    "src",
-    "fixture",
+    fixtureFolder,
     Math.floor(Math.random() * 100000) + ".db",
   );
   const file = new PagedFile(path, { pageSize: 256, cacheSize: 0 });
