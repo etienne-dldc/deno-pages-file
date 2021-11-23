@@ -10,7 +10,7 @@ import {
   WriteBlock,
 } from "./buffer/mod.ts";
 
-export enum InternalPageType {
+export enum PageBlockType {
   Empty = 0,
   Root = 1,
   Emptylist = 2,
@@ -18,21 +18,21 @@ export enum InternalPageType {
   Entry = 4,
 }
 
-export class RawInternalPage {
-  public internalType: InternalPageType | number;
+export class RawPageBlock {
+  public internalType: PageBlockType | number;
   public readonly pageSize: number;
   public readonly addr: number;
   public readonly contentFacade: IBufferFacade;
 
+  private isClosed = false;
   private readonly dirtyManager: DirtyManager;
   private readonly fullFacade: TrackedBufferFacade;
-  private isClosed = false;
 
   constructor(
     pageSize: number,
     addr: number,
     buffer: Uint8Array,
-    type: InternalPageType | number,
+    type: PageBlockType | number,
     isDirty: boolean,
   ) {
     this.pageSize = pageSize;
@@ -52,8 +52,8 @@ export class RawInternalPage {
 
   public set type(newType: number) {
     if (
-      this.internalType < InternalPageType.Entry ||
-      newType < InternalPageType.Entry
+      this.internalType < PageBlockType.Entry ||
+      newType < PageBlockType.Entry
     ) {
       throw new Error(`Only entry type are allowed to change`);
     }
@@ -98,13 +98,13 @@ export class RawInternalPage {
   }
 }
 
-export class InternalPage {
+export class PageBlock {
   public readonly pageSize: number;
   public readonly addr: number;
 
-  protected readonly parent: RawInternalPage;
+  protected readonly parent: RawPageBlock;
 
-  constructor(parent: RawInternalPage) {
+  constructor(parent: RawPageBlock) {
     this.parent = parent;
     this.pageSize = parent.pageSize;
     this.addr = parent.addr;
@@ -131,14 +131,14 @@ export class InternalPage {
   }
 }
 
-export class InternalEmptyPage extends InternalPage {
+export class EmptyPageBlock extends PageBlock {
   constructor(pageSize: number, addr: number) {
     const buffer = new Uint8Array(pageSize); // buffer[0] is 0 which correspond to PageType.Empty
-    const parent = new RawInternalPage(
+    const parent = new RawPageBlock(
       pageSize,
       addr,
       buffer,
-      InternalPageType.Empty,
+      PageBlockType.Empty,
       true,
     );
     super(parent);
@@ -151,12 +151,12 @@ const ROOT_HEADER = [
   FixedBlockList.named("nextPage", Block.uint16),
 ] as const;
 
-export class InternalRootPage extends InternalPage {
+export class RootPageBlock extends PageBlock {
   public readonly contentFacade: IBufferFacade;
 
   private readonly blocks: FixedBlockList<typeof ROOT_HEADER>;
 
-  constructor(parent: RawInternalPage, isNew: boolean) {
+  constructor(parent: RawPageBlock, isNew: boolean) {
     super(parent);
     this.blocks = new FixedBlockList(ROOT_HEADER, parent.contentFacade);
     this.contentFacade = this.blocks.selectRest();
@@ -195,13 +195,13 @@ const EMPTYLIST_HEADER_BLOCKS = [
   FixedBlockList.named("count", Block.uint16),
 ] as const;
 
-export class InternalEmptylistPage extends InternalPage {
+export class EmptylistPageBlock extends PageBlock {
   public readonly capacity: number;
 
   private readonly blocks: FixedBlockList<typeof EMPTYLIST_HEADER_BLOCKS>;
   private readonly contentFacade: IBufferFacade;
 
-  constructor(parent: RawInternalPage) {
+  constructor(parent: RawPageBlock) {
     super(parent);
     this.blocks = new FixedBlockList(
       EMPTYLIST_HEADER_BLOCKS,
@@ -277,12 +277,12 @@ const DATA_HEADER_BLOCKS = [
   FixedBlockList.named("nextPage", Block.uint16),
 ] as const;
 
-export class InternalDataPage extends InternalPage {
+export class DataPageBlock extends PageBlock {
   public readonly contentFacade: IBufferFacade;
 
   private readonly blocks: FixedBlockList<typeof DATA_HEADER_BLOCKS>;
 
-  constructor(parent: RawInternalPage) {
+  constructor(parent: RawPageBlock) {
     super(parent);
     this.blocks = new FixedBlockList(DATA_HEADER_BLOCKS, parent.contentFacade);
     this.contentFacade = this.blocks.selectRest();
@@ -310,13 +310,13 @@ const ENTRY_HEADER_BLOCKS = [
   FixedBlockList.named("nextPage", Block.uint16),
 ] as const;
 
-export class InternalEntryPage extends InternalPage {
+export class EntryPageBlock extends PageBlock {
   public readonly contentFacade: IBufferFacade;
 
   private readonly blocks: FixedBlockList<typeof ENTRY_HEADER_BLOCKS>;
 
-  constructor(parent: RawInternalPage) {
-    if (parent.type < InternalPageType.Entry) {
+  constructor(parent: RawPageBlock) {
+    if (parent.type < PageBlockType.Entry) {
       throw new Error(`Invalid page type`);
     }
     super(parent);

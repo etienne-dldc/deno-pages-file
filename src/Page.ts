@@ -1,8 +1,4 @@
-import {
-  InternalDataPage,
-  InternalEntryPage,
-  InternalRootPage,
-} from "./InternalPage.ts";
+import { DataPageBlock, EntryPageBlock, RootPageBlock } from "./PageBlock.ts";
 import { PagedFile } from "./PagedFile.ts";
 import {
   BUFFER_FACADE_UNSAFE_ACCESS,
@@ -10,32 +6,34 @@ import {
   IWriteValue,
   PagedBufferFacade,
 } from "./buffer/mod.ts";
-import { InternalPageType } from "./InternalPage.ts";
+import { PageBlockType } from "./PageBlock.ts";
 
 export type ParentRef = {
-  getInternalDataPage: PagedFile["getInternalDataPage"];
+  getDataPageBlock: PagedFile["getDataPageBlock"];
   getEmptyPageAddr: PagedFile["getEmptyPageAddr"];
   onPageClosed: PagedFile["onPageClosed"];
-  deleteInternalPage: PagedFile["deleteInternalPage"];
-  deleteInternalDataPage: PagedFile["deleteInternalDataPage"];
+  deletePageBlock: PagedFile["deletePageBlock"];
+  deleteDataPageBlock: PagedFile["deleteDataPageBlock"];
   checkCache: PagedFile["checkCache"];
   getInternalRootOrEntry: PagedFile["getInternalRootOrEntry"];
 };
 
-type PageInfo = null | InternalDataPage | InternalRootPage | InternalEntryPage;
+export const PAGE_INTERNAL_CLOSE = Symbol("PAGE_INTERNAL_CLOSE");
+
+type PageInfo = null | DataPageBlock | RootPageBlock | EntryPageBlock;
 
 export class Page implements IBufferFacade {
   public readonly addr: number;
 
-  private internalType: number;
+  private pageBlockType: number;
+  private isClosed = false;
+
   private readonly parent: ParentRef;
   private readonly contentFacade: PagedBufferFacade<PageInfo>;
-  private readonly internalPageCache = new Map<
+  private readonly pageBlockCache = new Map<
     number | null,
-    InternalDataPage | InternalRootPage | InternalEntryPage
+    DataPageBlock | RootPageBlock | EntryPageBlock
   >();
-
-  private isClosed = false;
 
   constructor(
     parent: ParentRef,
@@ -44,7 +42,7 @@ export class Page implements IBufferFacade {
   ) {
     this.parent = parent;
     this.addr = addr;
-    this.internalType = type;
+    this.pageBlockType = type;
     this.contentFacade = new PagedBufferFacade<PageInfo>(
       null,
       // getNextPage
@@ -74,14 +72,14 @@ export class Page implements IBufferFacade {
         if (prevPage === null) {
           return;
         }
-        parent.deleteInternalDataPage(prevPage.nextPage);
+        parent.deleteDataPageBlock(prevPage.nextPage);
       },
     );
   }
 
   // root page return 0
   public get type(): number {
-    return this.isRoot ? 0 : internalPageTypeToEntryPageType(this.internalType);
+    return this.isRoot ? 0 : pageBlockTypeToEntryPageType(this.pageBlockType);
   }
 
   public set type(newType: number) {
@@ -90,14 +88,14 @@ export class Page implements IBufferFacade {
     }
     const internalPage = this.parent.getInternalRootOrEntry(
       this.addr,
-      this.internalType,
+      this.pageBlockType,
     );
-    if (internalPage instanceof InternalRootPage) {
+    if (internalPage instanceof RootPageBlock) {
       throw new Error(`Cannot change root type`);
     }
-    const fixedType = entryPageTypeToInternalPageType(newType);
+    const fixedType = entryPageTypeToPageBlockType(newType);
     internalPage.type = fixedType;
-    this.internalType = fixedType;
+    this.pageBlockType = fixedType;
   }
 
   public get isRoot() {
@@ -120,6 +118,11 @@ export class Page implements IBufferFacade {
       throw new Error(`Cannot read closed page`);
     }
     return this.contentFacade[BUFFER_FACADE_UNSAFE_ACCESS](start, length);
+  };
+
+  // User is not allowed to close a page because other manager might be using it too
+  public [PAGE_INTERNAL_CLOSE] = () => {
+    this.close();
   };
 
   public read(start?: number, length?: number): Uint8Array {
@@ -187,7 +190,15 @@ export class Page implements IBufferFacade {
     return result;
   }
 
-  public close() {
+  public delete() {
+    if (this.isRoot) {
+      throw new Error(`Can't delete Root page`);
+    }
+    this.parent.deletePageBlock(this.addr, this.pageBlockType);
+    this.close();
+  }
+
+  private close() {
     if (this.isClosed) {
       return;
     }
@@ -195,50 +206,42 @@ export class Page implements IBufferFacade {
     this.parent.onPageClosed(this.addr);
   }
 
-  public delete() {
-    if (this.isRoot) {
-      throw new Error(`Can't delete Root page`);
-    }
-    this.parent.deleteInternalPage(this.addr, this.internalType);
-    this.close();
-  }
-
   private getPage(
     addr: number | null,
     mustExists: boolean,
-  ): InternalDataPage | InternalRootPage | InternalEntryPage {
-    const cached = this.internalPageCache.get(addr);
+  ): DataPageBlock | RootPageBlock | EntryPageBlock {
+    const cached = this.pageBlockCache.get(addr);
     if (cached && cached.closed === false) {
       return cached;
     }
     if (addr === null) {
       const internalPage = this.parent.getInternalRootOrEntry(
         this.addr,
-        this.internalType,
+        this.pageBlockType,
       );
-      this.internalPageCache.set(addr, internalPage);
+      this.pageBlockCache.set(addr, internalPage);
       return internalPage;
     }
-    const internalPage = this.parent.getInternalDataPage(addr, mustExists);
-    this.internalPageCache.set(addr, internalPage);
+    const internalPage = this.parent.getDataPageBlock(addr, mustExists);
+    this.pageBlockCache.set(addr, internalPage);
     return internalPage;
   }
 }
 
-const MAX_ENTRY_PAGE_TYPE = 255 - InternalPageType.Entry;
+const MAX_ENTRY_PAGE_TYPE = 255 - PageBlockType.Entry;
 
-export function entryPageTypeToInternalPageType(type: number): number {
+export function entryPageTypeToPageBlockType(type: number): number {
   if (type < 0) {
     throw new Error(
-      `Page type must be greater or equal to ${InternalPageType.Entry}`,
+      `Page type must be greater or equal to ${PageBlockType.Entry}`,
     );
   }
   if (type > MAX_ENTRY_PAGE_TYPE) {
     throw new Error(`Page type cannot exceed ${MAX_ENTRY_PAGE_TYPE}`);
   }
-  return InternalPageType.Entry + type;
+  return PageBlockType.Entry + type;
 }
 
-export function internalPageTypeToEntryPageType(type: number): number {
-  return type - InternalPageType.Entry;
+export function pageBlockTypeToEntryPageType(type: number): number {
+  return type - PageBlockType.Entry;
 }
