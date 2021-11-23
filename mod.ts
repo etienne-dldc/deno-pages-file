@@ -43,3 +43,4 @@ export type {
   IWriteBlockVariable,
   IWriteValue,
 } from "./src/buffer/mod.ts";
+export { PageManager } from "./src/PageManager.ts";
