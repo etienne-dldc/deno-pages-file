@@ -8,7 +8,7 @@ import {
 } from "./buffer/mod.ts";
 import { PageBlockType } from "./PageBlock.ts";
 
-export type ParentRef = {
+export type PageParentRef = {
   getDataPageBlock: PagedFile["getDataPageBlock"];
   getEmptyPageAddr: PagedFile["getEmptyPageAddr"];
   onPageClosed: PagedFile["onPageClosed"];
@@ -28,7 +28,7 @@ export class Page implements IBufferFacade {
   private pageBlockType: number;
   private isClosed = false;
 
-  private readonly parent: ParentRef;
+  private readonly parent: PageParentRef;
   private readonly contentFacade: PagedBufferFacade<PageInfo>;
   private readonly pageBlockCache = new Map<
     number | null,
@@ -36,7 +36,7 @@ export class Page implements IBufferFacade {
   >();
 
   constructor(
-    parent: ParentRef,
+    parent: PageParentRef,
     addr: number,
     type: number,
   ) {

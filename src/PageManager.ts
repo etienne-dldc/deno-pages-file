@@ -11,7 +11,7 @@ export interface IPageManager {
   releasePage(page: number | Page): void;
 }
 
-type ParentRef = {
+export type PageManagerParentRef = {
   deletePage: PagedFile["deletePage"];
   getRootPageForManager: PagedFile["getRootPageForManager"];
   getPageForManager: PagedFile["getPageForManager"];
@@ -22,9 +22,9 @@ type ParentRef = {
 };
 
 export class PageManager implements IPageManager {
-  private readonly parent: ParentRef;
+  private readonly parent: PageManagerParentRef;
 
-  constructor(parent: ParentRef) {
+  constructor(parent: PageManagerParentRef) {
     this.parent = parent;
   }
 

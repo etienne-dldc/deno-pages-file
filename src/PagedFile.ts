@@ -12,8 +12,13 @@ import {
   entryPageTypeToPageBlockType,
   Page,
   PAGE_INTERNAL_CLOSE,
+  PageParentRef,
 } from "./Page.ts";
-import { IPageManager, PageManager } from "./PageManager.ts";
+import {
+  IPageManager,
+  PageManager,
+  PageManagerParentRef,
+} from "./PageManager.ts";
 
 const VALID_PAGE_SIZE = [8, 9, 10, 11, 12, 13, 14, 15].map((v) =>
   Math.pow(2, v)
@@ -39,6 +44,8 @@ export class PagedFile implements IPageManager {
     { page: Page; managers: Set<PageManager> }
   >();
   private readonly mainManager: PageManager;
+  private readonly pageManagerParentRef: PageManagerParentRef;
+  private readonly pageParentRef: PageParentRef;
 
   private isClosed = false;
   private filePageCount: number; // Number of pages in the document (written on file)
@@ -72,6 +79,24 @@ export class PagedFile implements IPageManager {
     // memory page count always include root
     this.memoryPageCount = pageCount === 0 ? 1 : pageCount;
     this.mainManager = this.createManager();
+    this.pageManagerParentRef = {
+      deletePage: this.deletePage.bind(this),
+      releaseAllPagesForManager: this.releaseAllPagesForManager.bind(this),
+      releasePageForManager: this.releasePageForManager.bind(this),
+      createPageForManager: this.createPageForManager.bind(this),
+      getOpenPagesForManager: this.getOpenPagesForManager.bind(this),
+      getPageForManager: this.getPageForManager.bind(this),
+      getRootPageForManager: this.getRootPageForManager.bind(this),
+    };
+    this.pageParentRef = {
+      getEmptyPageAddr: this.getEmptyPageAddr.bind(this),
+      getDataPageBlock: this.getDataPageBlock.bind(this),
+      onPageClosed: this.onPageClosed.bind(this),
+      deletePageBlock: this.deletePageBlock.bind(this),
+      deleteDataPageBlock: this.deleteDataPageBlock.bind(this),
+      getInternalRootOrEntry: this.getInternalRootOrEntry.bind(this),
+      checkCache: this.checkCache.bind(this),
+    };
   }
 
   public get closed() {
@@ -89,15 +114,7 @@ export class PagedFile implements IPageManager {
   }
 
   public createManager(): PageManager {
-    return new PageManager({
-      deletePage: this.deletePage.bind(this),
-      releaseAllPagesForManager: this.releaseAllPagesForManager.bind(this),
-      releasePageForManager: this.releasePageForManager.bind(this),
-      createPageForManager: this.createPageForManager.bind(this),
-      getOpenPagesForManager: this.getOpenPagesForManager.bind(this),
-      getPageForManager: this.getPageForManager.bind(this),
-      getRootPageForManager: this.getRootPageForManager.bind(this),
-    });
+    return new PageManager(this.pageManagerParentRef);
   }
 
   public getRootPage(): Page {
@@ -300,15 +317,7 @@ export class PagedFile implements IPageManager {
 
   private instantiatePage(page: RootPageBlock | EntryPageBlock): Page {
     return new Page(
-      {
-        getEmptyPageAddr: this.getEmptyPageAddr.bind(this),
-        getDataPageBlock: this.getDataPageBlock.bind(this),
-        onPageClosed: this.onPageClosed.bind(this),
-        deletePageBlock: this.deletePageBlock.bind(this),
-        deleteDataPageBlock: this.deleteDataPageBlock.bind(this),
-        getInternalRootOrEntry: this.getInternalRootOrEntry.bind(this),
-        checkCache: this.checkCache.bind(this),
-      },
+      this.pageParentRef,
       page.addr,
       page.type,
     );
